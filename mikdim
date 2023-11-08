@@ -25,7 +25,7 @@ mkdir -p "$final_dir"
 cd "$final_dir"
 tar xzf "/tmp/archive.tar.gz"
 if [ -n "$postprocess_script" ]; then
-    $postprocess_script
+    eval "$postprocess_script"
 fi
 rm -f "/tmp/archive.tar.gz"
 rm -f "/tmp/postprocess.sh"
@@ -38,7 +38,6 @@ def printHelp():
     print("  -l --latest                    - build the image also with the latest tag", file=sys.stderr)
     print("  -t --tag <tag>                 - specify some another special tag", file=sys.stderr)
     print("  -p --project <project>         - specify directory or config file of the project where images should be built", file=sys.stderr)
-    print("  -s --semi-suffix <suffix>      - specify the suffix of the semiproduct (default '{}')".format(SEMI_SUFFIX), file=sys.stderr)
     print("  -V --project-version <version> - specify the project version", file=sys.stderr)
     print("  -B --project-branch <branch>   - specify the project branch", file=sys.stderr)
     print("  -n --no-project-version        - disable regular project version tagging", file=sys.stderr)
@@ -47,6 +46,7 @@ def printHelp():
     print("  -a --allow-branch <branch>     - allow branch name (default branch names if none given are {})".format(", ".join(ALLOWED_BRANCHES)), file=sys.stderr)
     print("  -A --allow-all-branches        - allow all branch names", file=sys.stderr)
     print("  -i --image <image-name>        - build only this image (multiple images may be specified)", file=sys.stderr)
+    print("  -s --semi-suffix <suffix>      - specify the suffix of the semiproduct (default '{}')".format(SEMI_SUFFIX), file=sys.stderr)
     print("  -h --help                      - show this help", file=sys.stderr)
 
 def parseOptions():
