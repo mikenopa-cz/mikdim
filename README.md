@@ -1,4 +1,4 @@
-# mikdim - The Mikenopa Docker imager.
+# mikdim - The Mikenopa Docker imager
 
 Mikdim is a python based tool allowing to build docker images with the codebase of the project itself. When developing a docker based project (like a web application)
 you need to maintain at least two runtime environments - development environment (used by project developers) and the production environment (used by people the project
