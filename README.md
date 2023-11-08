@@ -124,8 +124,8 @@ allows these configuration variables:
 * **prepare-command-dev** - a command to be invoked before the development building process is started (not very useful)
 * **subdir** - specify a subdirectory being used as the codebase
 * **exclude** - exclude specific files or directories from the codebase (specified relatively)
-* **environment* - a list of environment variables being passed to the image production building process
-* **environment-dev* - a list of environment variables being passed to the image development building process
+* **environment** - a list of environment variables being passed to the image production building process
+* **environment-dev** - a list of environment variables being passed to the image development building process
 
 Example configuration file:
 ```yaml
