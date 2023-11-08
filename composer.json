@@ -1,0 +1,16 @@
+{
+    "name": "mikenopa/mikdim",
+    "description": "The Mikenopa docker imager",
+    "license": "MIT",
+    "homepage": "https://github.com/mikenopa-cz/mikdim",
+    "type": "library",
+    "authors": [
+        {
+            "name": "R&D",
+            "email": "rd@mikenopa.com"
+        }
+    ],
+    "bin": [
+        "mikdim"
+    ]
+}
