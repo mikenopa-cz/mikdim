@@ -1,0 +1,9 @@
+images:
+    - name: mikm-test-image                # the image name
+      build: "docker/test-image"           # the path to the directory containing Dockerfile for building the semi-product of the image
+      project-dir: "/var/www/html"         # the path inside of the image where the project directory should be located (optional)
+      postprocess: "run-postprocess"       # run a postprocessing script after the project directory is copied at its location (optional)
+      prepare-command: "some/command args" # run a command before starting the build process
+      environment:                         # setup environment variables for the build
+        BUILD_ENV: production              # set the environment variable BUILD_ENV to value "production"
+        LANG: null                         # unset the environment variable LANG

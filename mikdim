@@ -1,0 +1,340 @@
+#!/usr/bin/python3
+
+import semantic_version
+import sys, getopt, os, subprocess, re, yaml, schema, tempfile, shutil, shlex
+from pprint import pprint
+
+DEFAULT_CONFIG = "mikdim.yaml"
+SEMI_SUFFIX = "semi-tmp"
+ALLOWED_BRANCHES = ["production", "staging", "master", "main"]
+
+DOCKERFILE_CONTENT = """# Dockerfile for building {finalImage} from {image} 
+FROM {image}
+
+COPY archive.tar.gz /tmp/archive.tar.gz
+COPY postprocess.sh /tmp/postprocess.sh
+RUN bash /tmp/postprocess.sh
+"""
+
+POSTPROCESS_CONTENT = """#!/bin/bash
+set -e
+final_dir={finalDir}
+postprocess_script={postprocessScript}
+mkdir -p "$final_dir"
+cd "$final_dir"
+tar xzf "/tmp/archive.tar.gz"
+if [ -n "$postprocess_script" ]; then
+    $postprocess_script
+fi
+rm -f "/tmp/archive.tar.gz"
+rm -f "/tmp/postprocess.sh"
+"""
+
+def printHelp():
+    print("usage: {} [options]".format(sys.argv[0]), file=sys.stderr)
+    print("options:", file=sys.stderr)
+    print("  -l --latest                    - build the image also with the latest tag", file=sys.stderr)
+    print("  -t --tag <tag>                 - specify some another special tag", file=sys.stderr)
+    print("  -p --project <project>         - specify directory or config file of the project where images should be built", file=sys.stderr)
+    print("  -s --semi-suffix <suffix>      - specify the suffix of the semiproduct (default '{}')".format(SEMI_SUFFIX), file=sys.stderr)
+    print("  -V --project-version <version> - specify the project version", file=sys.stderr)
+    print("  -B --project-branch <branch>   - specify the project branch", file=sys.stderr)
+    print("  -n --no-project-version        - disable regular project version tagging", file=sys.stderr)
+    print("  -b --no-project-branch         - disable regular project branch tagging", file=sys.stderr)
+    print("  -e --preserve-environment      - preserve environment variables", file=sys.stderr)
+    print("  -a --allow-branch <branch>     - allow branch name (default branch names if none given are {})".format(", ".join(ALLOWED_BRANCHES)), file=sys.stderr)
+    print("  -A --allow-all-branches        - allow all branch names", file=sys.stderr)
+    print("  -h --help                      - show this help", file=sys.stderr)
+
+def parseOptions():
+    options = {
+        "allowedBranches": ALLOWED_BRANCHES.copy(),
+        "latest": False,
+        "tags": [],
+        "project": None,
+        "projectVersion": None,
+        "projectBranch": None,
+        "projectVersioning": True,
+        "projectBranchVersioning": True,
+        "preserveEnvironment": False,
+        "semiSuffix": SEMI_SUFFIX,
+        "help": False
+    }
+    (opts, args) = getopt.getopt(
+        sys.argv[1:],
+        "lt:p:V:B:s:a:Ahnbe",
+        [
+            "project=", "project-version=", "project-branch=", "semi-suffix=", "tag=", "allow-branch="
+            "allow-all-branches=", "no-project-version", "no-project-branch", "latest", "help", "preserve-environment"
+        ]
+    )
+    for (opt, value) in opts:
+        if (opt == '-l' or opt == '--latest'):
+            options["latest"] = True
+        elif (opt == '-t' or opt == '--tag'):
+            options["tags"].append(value)
+        elif (opt == '-p' or opt == '--project'):
+            options["project"] = value
+        elif (opt == '-V' or opt == '--project-version'):
+            options['projectVersion'] = value
+        elif (opt == '-B' or opt == '--project-branch'):
+            options['projectBranch'] = value
+        elif (opt == '-s' or opt == '--semi-suffix'):
+            options['semiSuffix'] = value
+        elif (opt == '-h' or opt == '--help'):
+        	options['help']= True
+        elif (opt == '-n' or opt == '--no-project-version'):
+        	options['projectVersioning']= False
+        elif (opt == '-b' or opt == '--no-project-branch'):
+        	options['projectBranchVersioning']= False
+        elif (opt == '-e' or opt == '--preserve-environment'):
+        	options['preserveEnvironment']= True
+        elif (opt == '-a' or opt == '--allow-branch'):
+            if options['allowedBranches'] != None:
+                options['allowedBranches'].append(value)
+        elif (opt == '-A' or opt == '--allow-all-branches'):
+            options['allowedBranches'] = None
+    return options 
+
+def enterProject(project):
+    if project == None:
+        project = "."
+    if os.path.isdir(project):
+        os.chdir(project)
+        file = DEFAULT_CONFIG
+    elif os.path.isfile(project):
+        os.chdir(os.path.dirname(project))
+        file = os.path.basename(project)
+    if os.path.isfile(file):
+        return file
+    return None
+
+def determineProjectVersion(projectVersion):
+    if projectVersion == None:
+        try:
+            projectVersion = subprocess.check_output(["git", "describe"])
+            projectVersion = projectVersion.decode("utf-8")
+        except:
+            return None
+    projectVersion = projectVersion.strip()
+    reMatch = re.search('^v?(.*)$', projectVersion)
+    if reMatch:
+        projectVersion = reMatch[1]
+    try:
+        semantic_version.Version(projectVersion)
+    except:
+        return None
+    return projectVersion
+
+def determineProjectBranch(projectBranch):
+    if projectBranch != None:
+        return projectBranch;
+    
+    try:
+        projectBranch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+        projectBranch = projectBranch.decode("utf-8")
+    except:
+        return None
+    
+    projectBranch = projectBranch.strip()
+    if projectBranch == 'HEAD' or projectBranch == '':
+        projectBranch = None
+    return projectBranch
+
+def loadConfig(file):
+    with open(file, "r") as stream:
+        try:
+            config = yaml.safe_load(stream)
+        except:
+            return None
+    return config
+
+def checkConfig(config):
+    configSchema = schema.Schema({
+        "images": [
+            {
+                "name": str,
+                "build": str,
+                schema.Optional("prepare-command"): schema.Or(str, [str]),
+                schema.Optional("project-dir"): str,
+                schema.Optional("postprocess"): str,
+                schema.Optional("environment"): {
+                    schema.Optional(str): schema.Or(str, None)
+                },
+                schema.Optional("subdir"): str,
+                schema.Optional("exclude"): [str],
+                schema.Optional(str): object
+            }
+        ]
+    })
+    try:
+        return configSchema.validate(config)
+    except:
+        return None
+
+def putFile(directory, file, template, *args, **kwargs):
+    file = "{}/{}".format(directory, file)
+    if args or kwargs:
+        content = template.format(*args, **kwargs)
+    else:
+        content = template
+    with open(file, 'w') as f:
+        f.write(content)
+
+
+def createProjectArchive(tempDir, subdir, excludeDirs):
+    archive = "{}/archive-{}.tar.gz".format(os.path.realpath(tempDir), createProjectArchive.archiveNumber)
+    createProjectArchive.archiveNumber += 1
+    excludeArgs = []
+    if not os.path.isdir(subdir):
+        raise Exception("Image sbdir is not a directory")
+    for excludeDir in excludeDirs:
+        excludeArgs.append("--exclude")
+        excludeArgs.append(re.sub(r'^/*', './', excludeDir))
+    cwd = os.getcwd()
+    os.chdir(subdir)
+    subprocess.run(["tar", "-czf", archive, "--exclude", "./.git"] + excludeArgs + ["."])
+    os.chdir(cwd)
+    return archive
+createProjectArchive.archiveNumber = 1
+
+def getEnvVars(imageConfig):
+    env = None
+    if not imageConfig['preserveEnvironment']:
+        env = {}
+    if not ("environment" in imageConfig):
+        return env
+    if env == None:
+        env = dict(os.environ)
+    for var, val in imageConfig['environment'].items():
+        if val != None:
+            env[var] = val
+        elif var in env:
+            del env[var]
+    return env
+
+def buildSemiProduct(imageConfig, tempDir):
+    if not os.path.isdir(imageConfig['build']):
+        raise Exception("Build directory of image '{}' is not a directory".format(imageConfig['name']))
+    if not os.path.isfile(imageConfig['build'] + "/Dockerfile"):
+        raise Exception("Build directory of image '{}' is outside the project directory".format(imageConfig['name']))
+    if not os.path.isfile("{}/Dockerfile".format(imageConfig['build'])):
+        raise Exception("Build directory does not contain Dockerfile")
+    subprocess.run(["docker", "build", "-t", imageConfig['semiTag'], imageConfig['build']], env=getEnvVars(imageConfig))
+
+def buildFinalProduct(imageConfig, tempDir):
+    dockerDir = "{}/docker-{}".format(tempDir, imageConfig['name'])
+    os.mkdir(dockerDir)
+    finalDir = imageConfig["project-dir"] if "project-dir" in imageConfig else "/workspace"
+    postprocessScript = imageConfig["postprocess"] if "postprocess" in imageConfig else ""
+    putFile(dockerDir, "Dockerfile", DOCKERFILE_CONTENT, image=imageConfig["semiTag"], finalImage=imageConfig["finalImage"])
+    putFile(dockerDir, "postprocess.sh", POSTPROCESS_CONTENT, finalDir=shlex.quote(finalDir), postprocessScript=shlex.quote(postprocessScript))
+    shutil.copy(imageConfig['projectArchive'], "{}/archive.tar.gz".format(dockerDir))
+    imageArgs = []
+    for img in imageConfig["finalImages"]:
+        imageArgs.append("-t");
+        imageArgs.append(img)
+    if imageArgs:
+        subprocess.run(["docker", "build"] + imageArgs + [dockerDir])
+    else:
+        raise Exception("No final tag specified")
+    shutil.rmtree(dockerDir)
+
+def cleanupBuild(imageConfig, tempDir):
+    subprocess.run(["docker", "image", "rm", imageConfig['semiTag']])
+
+def invokePrepareCommand(command):
+    if command == None:
+        return
+    if not command:
+        raise Exception("Cannot invoke empty prepare command")
+    if subprocess.run(command).returncode != 0:
+        raise Exception("Prepare command failed")
+
+def run(options):
+    project = options["project"]
+    projectVersion = options["projectVersion"]
+    projectBranch = options["projectBranch"]
+    file = enterProject(project)
+    if file == None:
+        print("Error: config file not found", file=sys.stderr)
+        return 1
+
+    if options["projectVersioning"]:
+        projectVersion = determineProjectVersion(projectVersion)
+        if projectVersion == None:
+            print("Error: cannot determine project version", file=sys.stderr)
+            return 2
+    else:
+        if projectVersion != None:
+            print("Error: cannot combine --project-version and --no-project-version options", file=sys.stderr)
+            return 2
+    
+    if options["projectBranchVersioning"]:
+        projectBranch = determineProjectBranch(projectBranch)
+        if projectBranch == None:
+            print("Error: cannot determine project branch", file=sys.stderr)
+            return 2
+        if projectBranch != None and (options['allowedBranches'] == None or not projectBranch in options['allowedBranches']):
+            projectBranch = None
+    else:
+        if projectBranch != None:
+            print("Error: cannot combine --project-branch and --no-project-branch options", file=sys.stderr)
+            return 2
+
+
+    config = loadConfig(file)
+
+    if config == None:
+        print("Error: cannot load the config file", file=sys.stderr)
+        return 3
+
+    config = checkConfig(config)
+    if config == None:
+        print("Error: config file is invalid", file=sys.stderr)
+        return 4
+    with tempfile.TemporaryDirectory() as tempDir:
+        for imageConfig in config["images"]:
+            imageConfig = imageConfig.copy()
+            imageConfig["preserveEnvironment"] = options["preserveEnvironment"]
+            imageConfig["projectVersion"] = projectVersion
+            imageConfig["semiSuffix"] = options["semiSuffix"]
+            imageConfig["finalImage"] = imageConfig["name"]
+            imageConfig["semiTag"] = "{}:{}".format(imageConfig["name"], options["semiSuffix"])
+            imageConfig["finalTags"] = []
+            if projectVersion != None:
+                imageConfig["finalTags"].append(projectVersion)
+            if options["latest"]:
+                imageConfig["finalTags"].append("latest")
+            if projectBranch != None:
+                imageConfig["finalTags"].append(projectBranch)
+            for tag in options["tags"]:
+                if (tag != 'latest' or not options["latest"]) and tag != projectBranch:
+                    imageConfig["finalTags"].append(tag)
+            imageConfig["finalImages"] = []
+            for tag in imageConfig["finalTags"]:
+                imageConfig["finalImages"].append("{}:{}".format(imageConfig["finalImage"], tag))
+            subdir = imageConfig['subdir'] if 'subdir' in imageConfig else '.'
+            exclude = imageConfig['exclude'] if 'exclude' in imageConfig else []
+            prepareCommand = imageConfig['prepare-command'] if 'prepare-command' in imageConfig else None
+            if isinstance(prepareCommand, str):
+                prepareCommand = ["bash", "-c", prepareCommand]
+            try:
+                invokePrepareCommand(prepareCommand)
+                archive = createProjectArchive(tempDir, subdir, exclude)
+                imageConfig["projectArchive"] = archive
+                buildSemiProduct(imageConfig, tempDir)
+                buildFinalProduct(imageConfig, tempDir)
+                cleanupBuild(imageConfig, tempDir)
+            except Exception as e:
+                print("Error: building image {} failed: {}".format(imageConfig["name"], e), file=sys.stderr)
+    return 0
+
+options = parseOptions()
+
+if options["help"]:
+    printHelp()
+    exit(1)
+
+exit(run(options))
+
