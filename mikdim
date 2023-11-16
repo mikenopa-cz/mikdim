@@ -241,7 +241,7 @@ def buildSemiProduct(imageConfig, tempDir):
     for img in imageConfig["semiTags"]:
         imageArgs.append("-t");
         imageArgs.append(img)
-    subprocess.run(["docker", "build"] + imageArgs + [imageConfig['build']], env=getEnvVars(imageConfig, True))
+    subprocess.run(["docker", "build", "--pull"] + imageArgs + [imageConfig['build']], env=getEnvVars(imageConfig, True))
 
 def buildFinalProduct(imageConfig, tempDir, projectArchive):
     dockerDir = "{}/docker-{}".format(tempDir, imageConfig['name'])
