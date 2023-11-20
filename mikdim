@@ -31,10 +31,60 @@ rm -f "/tmp/archive.tar.gz"
 rm -f "/tmp/postprocess.sh"
 """
 
+def integrationPluginGit(options, detect):
+    data = {}
+    if detect["version"]:
+        try:
+            projectVersion = subprocess.check_output(["git", "describe"])
+            projectVersion = projectVersion.decode("utf-8")
+            projectVersion = projectVersion.strip()
+        except:
+            projectVersion = None
+        if projectVersion != None:
+            data["version"] = projectVersion
+
+    if detect["branch"]:
+        try:
+            projectBranch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+            projectBranch = projectBranch.decode("utf-8")
+            projectBranch = projectBranch.strip()
+            if projectBranch == 'HEAD' or projectBranch == '':
+                projectBranch = None
+        except:
+            projectBranch = None
+        if projectBranch != None:
+            data["branch"] = projectBranch
+    return data
+
+def getenv(key):
+    return os.environ[key] if key in os.environ else None
+
+def integrationPluginGitlab(options, detect):
+    data = {}
+    if detect["imagePrefix"]:
+        imagePrefix = getenv("CI_REGISTRY_IMAGE")
+        if imagePrefix != None and imagePrefix != '':
+            data["imagePrefix"] = imagePrefix
+    if detect["version"]:
+        version = getenv("CI_COMMIT_TAG")
+        if version != None and version != '':
+            data["version"] = version
+    if detect["branch"]:
+        branch = getenv("CI_COMMIT_BRANCH")
+        if branch != None and branch != '':
+            data["branch"] = branch
+    return data
+
+INTEGRATION_PLUGINS = {
+        "git": integrationPluginGit,
+        "gitlab": integrationPluginGitlab
+}
+
 def printHelp():
     print("usage: {} [options]".format(sys.argv[0]), file=sys.stderr)
     print("options:", file=sys.stderr)
-    print("  -d --dev                       - invoke dev build instead of production build")
+    print("  -d --dev                       - invoke dev build of the images")
+    print("     --prod                      - invoke prod build of the images")
     print("  -t --tag <tag>                 - specify some another special tag", file=sys.stderr)
     print("  -p --project <project>         - specify directory or config file of the project where images should be built", file=sys.stderr)
     print("  -P --prefix <image-prefix>     - specify image prefix", file=sys.stderr)
@@ -50,12 +100,14 @@ def printHelp():
     print("  -i --image <image-name>        - build only this image (multiple images may be specified)", file=sys.stderr)
     print("  -s --semi-tag <tag>            - specify the tag of the semiproduct (default '{}')".format(SEMI_TAG), file=sys.stderr)
     print("  -D --dry-run                   - just print building info and exit", file=sys.stderr)
+    print("     --push                      - push the images to the registry (registry login is not part of this command)", file=sys.stderr)
     print("  -h --help                      - show this help", file=sys.stderr)
 
 def parseOptions():
     options = {
         "integrationPlugins": [],
         "devBuild": False,
+        "prodBuild": False,
         "imagePrefix": None,
         "allowedBranches": ALLOWED_BRANCHES.copy(),
         "tags": [],
@@ -66,6 +118,7 @@ def parseOptions():
         "semiTag": SEMI_TAG,
         "help": False,
         "dryRun": False,
+        "push": False,
         "wantedImages": []
     }
     (opts, args) = getopt.getopt(
@@ -74,12 +127,14 @@ def parseOptions():
         [
             "project=", "prefix=", "semi-tag=", "tag=", "allow-branch=", "image=", "allow-all-branches=",
             "dev", "no-project-version", "no-project-branch", "help", "preserve-environment",
-            "git", "gitlab", "dry-run"
+            "git", "gitlab", "dry-run", "prod", "push"
         ]
     )
     for (opt, value) in opts:
         if (opt == '-d' or opt == '--dev'):
             options["devBuild"] = True
+        elif (opt == '--prod'):
+            options['prodBuild'] = True
         elif (opt == '-t' or opt == '--tag'):
             options["tags"].append(value)
         elif (opt == '-p' or opt == '--project'):
@@ -111,9 +166,15 @@ def parseOptions():
                 options['integrationPlugins'].append("gitlab")
         elif (opt == '-D' or opt == '--dry-run'):
             options['dryRun'] = True
+        elif (opt == '--push'):
+            options['push'] = True
 
     if not options['wantedImages']:
         options['wantedImages'] = None
+
+    if not options["devBuild"]:
+        options["prodBuild"] = True
+
     return options 
 
 def enterProject(project):
@@ -235,15 +296,26 @@ def buildFinalProduct(imageConfig, tempDir, projectArchive):
         raise Exception("No final tag specified")
     shutil.rmtree(dockerDir)
 
+def pushTags(imageConfig):
+    for image in imageConfig["finalImages"]:
+        subprocess.run(["docker", "push", "--", image])
+
 def cleanupBuild(imageConfig, tempDir):
     for tag in imageConfig["cleanupImages"]:
         subprocess.run(["docker", "image", "rm", tag])
 
 def createFinalImageName(name, options):
-    if options["imagePrefix"] == None:
+    imagePrefix = options["imagePrefix"]
+
+    if imagePrefix == '':
+        imagePrefix = None
+
+    if imagePrefix == None:
         return name
+
     if name == 'main':
         return options["imagePrefix"]
+
     return options["imagePrefix"] + "/" + name
 
 def unique(array):
@@ -263,34 +335,9 @@ def tagsToImages(tags, image):
     return images
 
 
-def integrationPluginGit(options, detect):
-    data = {}
-    if detect["version"]:
-        try:
-            projectVersion = subprocess.check_output(["git", "describe"])
-            projectVersion = projectVersion.decode("utf-8")
-            projectVersion = projectVersion.strip()
-        except:
-            projectVersion = None
-        if projectVersion != None:
-            data["version"] = projectVersion
-
-    if detect["branch"]:
-        try:
-            projectBranch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-            projectBranch = projectBranch.decode("utf-8")
-            projectBranch = projectBranch.strip()
-            if projectBranch == 'HEAD' or projectBranch == '':
-                projectBranch = None
-        except:
-            projectBranch = None
-        if projectBranch != None:
-            data["branch"] = projectBranch
-    return data
-
 def getIntegrationPlugin(name):
-    if name == "git":
-        return integrationPluginGit
+    if name in INTEGRATION_PLUGINS:
+        return INTEGRATION_PLUGINS[name]
     return None
 
 def detectVersion(projectVersion):
@@ -305,15 +352,18 @@ def detectVersion(projectVersion):
         return None
     return projectVersion
 
-def determineIntegrationTags(options):
+def runIntegrationPlugins(options):
     data = {}
-    detectAll = ["version", "branch"]
+    detectAll = ["version", "branch", "imagePrefix"]
     detect = dict.fromkeys(detectAll, True)
     for plugin in options["integrationPlugins"]:
         plugin = getIntegrationPlugin(plugin)
         if plugin != None:
             pluginData = {}
             pluginData.update(plugin(options, detect))
+            for key in pluginData.keys():
+                if pluginData[key] == None:
+                    del pluginData[key]
             pluginData.update(data)
             data = pluginData
             
@@ -324,6 +374,8 @@ def determineIntegrationTags(options):
                 else:
                     detectAllNew.append(d)
             detectAll = detectAllNew
+        else:
+            data = {}
 
     tags = []
     if "version" in data and data["version"] != None and options["projectVersioning"]:
@@ -334,10 +386,13 @@ def determineIntegrationTags(options):
         branch = data["branch"]
         if options['allowedBranches'] == None or branch in options['allowedBranches']:
             tags.append(branch)
-    return tags
 
-def invokePrepareCommand(imageConfig, options):
-    if options["devBuild"]:
+    options["integrationTags"] = tags
+    if options["imagePrefix"] == None and "imagePrefix" in data:
+        options["imagePrefix"] = data["imagePrefix"]
+
+def invokePrepareCommand(imageConfig, options, devBuild):
+    if devBuild:
         prepareCommandKey = 'prepare-command-dev'
     else:
         prepareCommandKey = 'prepare-command'
@@ -356,16 +411,16 @@ def invokePrepareCommand(imageConfig, options):
 
 
 
-def processSingleImage(imageConfig, options, tempDir):
+def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
     imageConfig = imageConfig.copy()
     imageConfig["preserveEnvironment"] = options["preserveEnvironment"]
     imageConfig["finalImage"] = createFinalImageName(imageConfig["name"], options)
     imageConfig["semiImages"] = []
     imageConfig["cleanupImages"] = []
 
-    imageConfig["finalTags"] = determineIntegrationTags(options) + options["tags"]
+    imageConfig["finalTags"] = tags
     
-    if options["devBuild"]:
+    if devBuild:
         if not imageConfig["finalTags"]:
             imageConfig["finalTags"].append(DEV_TAG)
     else:
@@ -376,34 +431,40 @@ def processSingleImage(imageConfig, options, tempDir):
     imageConfig["finalImages"] = tagsToImages(imageConfig["finalTags"], imageConfig["finalImage"])
 
 
-    if options["devBuild"]:
+    if devBuild:
         imageConfig['semiImages'] = imageConfig["finalImages"]
     
     subdir = imageConfig['subdir'] if 'subdir' in imageConfig else '.'
     exclude = imageConfig['exclude'] if 'exclude' in imageConfig else []
     
-    print("Building image {} as {}".format(imageConfig["finalImage"], "dev" if options["devBuild"] else "prod"), file=sys.stderr)
-    if not options["devBuild"]:
+    print("Building image {} as {}".format(imageConfig["finalImage"], "dev" if devBuild else "prod"), file=sys.stderr)
+    if not devBuild:
         print("Semiproduct image: {}".format(imageConfig["semiImages"][0]), file=sys.stderr)
     print("Tags: {}".format(", ".join(imageConfig["finalTags"])), file=sys.stderr)
+    if options["push"]:
+        print("Images will be pushed to the repository", file=sys.stderr)
+    print("", file=sys.stderr)
 
     if options["dryRun"]:
-        return
+        return True
 
     if not imageConfig["finalTags"]:
         print("Warning: no tags given for building this image, skipping", file=sys.stderr)
-        return
+        return True
 
     try:
-        invokePrepareCommand(imageConfig, options)
-        if not options["devBuild"]:
+        invokePrepareCommand(imageConfig, options, devBuild)
+        if not devBuild:
             archive = createProjectArchive(tempDir, subdir, exclude)
         buildSemiProduct(imageConfig, tempDir)
-        if not options["devBuild"]:
+        if not devBuild:
             buildFinalProduct(imageConfig, tempDir, archive)
         cleanupBuild(imageConfig, tempDir)
+        if options["push"]:
+            pushTags(imageConfig)
     except Exception as e:
         print("Error: building image {} failed: {}".format(imageConfig["finalImage"], e), file=sys.stderr)
+        return False
 
 def run(options):
     file = enterProject(options["project"])
@@ -424,13 +485,21 @@ def run(options):
     
     processedImages = {}
 
+    runIntegrationPlugins(options)
+
     with tempfile.TemporaryDirectory() as tempDir:
         for imageConfig in config["images"]:
             if options["wantedImages"] != None:
                 if not imageConfig["name"] in options["wantedImages"]:
                     continue
                 processedImages[imageConfig["name"]] = True
-            processSingleImage(imageConfig, options, tempDir)
+            tags = options["integrationTags"] + options["tags"]
+            if options["prodBuild"]:
+                processSingleImage(imageConfig, options, tempDir, False, tags)
+            if options["devBuild"]:
+                if options["prodBuild"]:
+                    tags = [DEV_TAG]
+                processSingleImage(imageConfig, options, tempDir, True, tags)
         if options["wantedImages"] != None:
             for wantedImage in options["wantedImages"]:
                 if not wantedImage in processedImages:
