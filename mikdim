@@ -90,8 +90,6 @@ def printHelp():
     print("  -P --prefix <image-prefix>     - specify image prefix", file=sys.stderr)
     print("  -G --git                       - Use branch/version from git", file=sys.stderr)
     print("  -L --gitlab                    - Use branch/version from gitlab CI variables", file=sys.stderr)
-    print("  -V --project-version <version> - specify the project version", file=sys.stderr)
-    print("  -B --project-branch <branch>   - specify the project branch", file=sys.stderr)
     print("  -n --no-project-version        - disable project version tagging (use with --git or --gitlab)", file=sys.stderr)
     print("  -b --no-project-branch         - disable project branch tagging (use with --git or --gitlab)", file=sys.stderr)
     print("  -e --preserve-environment      - preserve environment variables", file=sys.stderr)

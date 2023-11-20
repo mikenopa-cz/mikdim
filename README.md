@@ -50,6 +50,7 @@ vendor/bin/mikdim
 * Run the command specified as `prepare-command-dev` in the image configuration (usually there is no reason to use such a command, but it is possible)
 * Build the image according to the specified Dockerfile with the environment variables specified as `environment-dev` in the image configuration
 * Tag the resulting image (see later)
+* Development build is triggered by the `--dev` option.
 
 ### Production build
 
@@ -58,30 +59,37 @@ vendor/bin/mikdim
 * Put the codebase inside of the image as a next building step (in fact implemented as a standalone docker file).
 * Invoke the command specified as `postprocess` in the image configuration allowing to change the image itself after it is copied into the image
 * Tag the resulting image (see later)
+* Development build is triggered by the `--prod` option or if neither `--dev` nor `--prod` is given.
 
 ### Tagging images
 
-Each image needs to specify a name in the image confiuration. This is always used as the base for the docker image name and cannot be changed by any options. But there are
-available multiple ways, how to control the version part of the image tag. (i.e. the part after the colon `:`).
+Each image needs to specify a name in the image confiuration. This is always used as the base for the docker image name. The image name may be also prefixed by specifying
+the `--prefix <prefix>` option.
 
-This holds for production builds:
-* Production builds are tagged by the semantic version number parsed from the git tag. You may specify the version manually by `--project-version <version>` if you don't use git.
-* Production builds are tagged by the branch name of the current branch if the current branch is on the list of allowed branches. `production`, `staging`, `main` and `master` is the
-  default list of allowed branches. You may specify the branch name manually by `--project-branch <branch>` if you don't use git.
-* If `--latest` flag is used, the production build is also tagged by the `latest` tag.
-* You may specify any other tag by passing the option `--tag <tag>`.
-* You may completely disable the version tagging by specifying `--no-project-version`
-* You may completely disable the branch tagging by specifying `--no-project-branch`
-* You may change the list of allowed branches by `--allow-branch <branch>`. Once one branch is allowed by this option, the default allowed branches will not be vaild anymore.
-* You may also allow all branches to be used as tags by specifying `--allow-all-branches`
+There are also multiple ways how to control the version part of the image tag (i.e. the part after the colon `:`). You may specify any version manually by specifying the
+`--tag <tag>` option. There are also available some _integration plugins_ allowing to set the tags according to the environment. Currently two integration plugins are
+implemented: `--git` plugin for integration with git and `--gitlab` for integration with gitlab CI runner API.
 
-This holds for the development builds:
-* Development builds are tagged by any tag specified using `--tag <tag>` option.
-* If no tag is specified, the default `dev` tag is used.
+Each integration plugin may be used to set:
 
-When the production build is created, it is necessary to build a semiproduct image (similar to development build, but with production environment variables). This semiproduct image
+* the branch of the project which will be used as a version tag if the branch matches an exact list (specified by options `--allow-branch <branch>` or by `--allow-all-branches`)
+* the current version of the project which will be also used as a version tag if the version tag matches semantic verisoning rules.
+* the image name prefix
+
+This holds:
+
+* If you don't want to use branch versions from the integration plugin, just specify the option `--no-project-branch`
+* If you don't want to use version tags from the integration plugin, just specify the option `--no-project-version`
+* If you don't want to use the image name prefix from the integration plugin, specify your own prefix by `--prefix <prefix>` (the prefix may be an empty string which is equivalent to
+  disabling the prefixing functionality)
+
+
+When building `--dev` and `--prod` builds using a single command invocation, the tagging is valid only for the production images. The dev build will be just tagged by `dev` in this case.
+If you want a more complex tagging scheme, run `mikdim` separately for `--dev` and `--prod` builds.
+
+When the `--prod` build is created, it is necessary to build a semiproduct image (similar to development build, but with production environment variables). This semiproduct image
 is used only temporarily and is automatically cleaned up after the production build is finished. But this semiproduct image needs to be tagged as well. For this purpose the default
-tag `semi-tmp` is used, but this default tag may be changed by the option `--semi-suffix <semiproduct-tag>`.
+tag `semi-tmp` is used, but this default tag may be changed by the option `--semi-tag <semiproduct-tag>`.
 
 ## The `mikdim` command
 
@@ -97,19 +105,21 @@ specified, mikdim will use exactly this file as the project file.
 
 Supported options:
 
-* `--dev` (`-d) - invoke a development build instead of a production build
-* `--latest` (`-l`) - tag the production build with the version tag `latest`
+* `--dev` (`-d) - invoke a development build 
+* `--prod` - invoke a production build (default)
 * `--tag <tag>` (`-t`) - tag the build with an arbitrary version tag
 * `--project <project>` (`-p`) - specify some another project file (or directory, see above)
-* `--project-version <version>` (`-V`) - specify a custom project version instead of taking it from git tag
-* `--project-branch <branch>` (`-B`) - specify a custom project branch instead of taking it from git
+* `--git` (`-G`) - enable the git integration plugin (i.e. read branch and tag names using git)
+* `--gitlab` (`-L`) - enable the gitlab integration plugin (i.e. read branch or tag names from gitlab environment variables)
 * `--no-project-version` - disable production build version tagging
 * `--no-project-branch` - disable production build branch tagging
 * `--preserve-environment` (`-e`) - use environment variables passed to the commands. Without that option, only environment variables from `mikdim.yaml` are passed to the build process
 * `--allow-branch <branch>` (`-a`) - specify a branch name, where branch tagging is allowed. If the branch is not on the allow list, branch tag will not be used
 * `--allow-all-branches` (`-A`) - allow all branches to be uased as branch tags
 * `--image <image-name>` (`-i`) - build only the specified image from all images being specified in `mikdim.yaml`
-* `--semi-suffix <tag>` (`-s`) - specify a custom semiproduct tag (temporary tag, it is removed after production build is completed).
+* `--semi-tag <tag>` (`-s`) - specify a custom semiproduct tag (temporary tag, it is removed after production build is completed).
+* `--dry-run` (`-D`) - just print information about what is going to be done instead of triggering a real build
+* `--push` - push each created image tag also to the registry
 
 
 ## The mikdim.yaml configuration file
