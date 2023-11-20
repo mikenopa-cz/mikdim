@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 
-import semantic_version
 import sys, getopt, os, subprocess, re, yaml, schema, tempfile, shutil, shlex
 from pprint import pprint
 
@@ -8,6 +7,7 @@ DEFAULT_CONFIG = "mikdim.yaml"
 SEMI_TAG = "semi-tmp"
 DEV_TAG = "dev"
 ALLOWED_BRANCHES = ["production", "staging", "master", "main"]
+SEMVER_REGEXP = '^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+)?$'
 
 DOCKERFILE_CONTENT = """# Dockerfile for building {finalImage} from {image} 
 FROM {image}
@@ -344,9 +344,7 @@ def detectVersion(projectVersion):
     if reMatch:
         projectVersion = reMatch[1]
 
-    try:
-        semantic_version.Version(projectVersion)
-    except:
+    if not re.search(SEMVER_REGEXP, projectVersion):
         return None
     return projectVersion
 
