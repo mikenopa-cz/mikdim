@@ -120,6 +120,7 @@ Supported options:
 * `--semi-tag <tag>` (`-s`) - specify a custom semiproduct tag (temporary tag, it is removed after production build is completed).
 * `--dry-run` (`-D`) - just print information about what is going to be done instead of triggering a real build
 * `--push` - push each created image tag also to the registry
+* `--push-only` - don't build, just push the images
 
 
 ## The mikdim.yaml configuration file
