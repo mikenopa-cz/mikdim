@@ -100,6 +100,8 @@ def printHelp():
     print("  -D --dry-run                   - just print building info and exit", file=sys.stderr)
     print("     --push                      - push the images to the registry (registry login is not part of this command)", file=sys.stderr)
     print("     --push-only                 - only push the images, don't build", file=sys.stderr)
+    print("  -u --untag                     - untag images after build (and push) is finished", file=sys.stderr)
+    print("     --prune                     - prune the image and builder cache", file=sys.stderr)
     print("  -h --help                      - show this help", file=sys.stderr)
 
 def parseOptions():
@@ -119,15 +121,17 @@ def parseOptions():
         "dryRun": False,
         "push": False,
         "pushOnly": False,
+        "untag": False,
+        "prune": False,
         "wantedImages": []
     }
     (opts, args) = getopt.getopt(
         sys.argv[1:],
-        "dt:p:P:s:a:i:AhnbeGLD",
+        "dt:p:P:s:a:i:AhnbeGLDu",
         [
             "project=", "prefix=", "semi-tag=", "tag=", "allow-branch=", "image=", "allow-all-branches=",
             "dev", "no-project-version", "no-project-branch", "help", "preserve-environment",
-            "git", "gitlab", "dry-run", "prod", "push", "push-only"
+            "git", "gitlab", "dry-run", "prod", "push", "push-only", "untag", "prune"
         ]
     )
     for (opt, value) in opts:
@@ -170,6 +174,10 @@ def parseOptions():
             options['push'] = True
         elif (opt == '--push-only'):
             options['pushOnly'] = True
+        elif (opt == '-u' or opt == '--untag'):
+            options['untag'] = True
+        elif (opt == '--prune'):
+            options['prune'] = True
 
     if not options['wantedImages']:
         options['wantedImages'] = None
@@ -312,7 +320,10 @@ def pushTags(imageConfig):
 
 def cleanupBuild(imageConfig, tempDir):
     for tag in imageConfig["cleanupImages"]:
-        subprocess.run(["docker", "image", "rm", tag])
+        subprocess.run(["docker", "image", "rm", "-f", "--", tag])
+    if imageConfig["prune"]:
+        subprocess.run(["docker", "image", "prune", "-f"])
+        subprocess.run(["docker", "builder", "prune", "-f"])
 
 def createFinalImageName(name, options):
     imagePrefix = options["imagePrefix"]
@@ -425,6 +436,7 @@ def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
     imageConfig["finalImage"] = createFinalImageName(imageConfig["name"], options)
     imageConfig["semiImages"] = []
     imageConfig["cleanupImages"] = []
+    imageConfig["prune"] = options["prune"]
 
     imageConfig["finalTags"] = tags
     
@@ -438,6 +450,8 @@ def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
 
     imageConfig["finalImages"] = tagsToImages(imageConfig["finalTags"], imageConfig["finalImage"])
 
+    if options["untag"]:
+        imageConfig["cleanupImages"] = imageConfig["cleanupImages"] + imageConfig["finalImages"]
 
     if devBuild:
         imageConfig['semiImages'] = imageConfig["finalImages"]

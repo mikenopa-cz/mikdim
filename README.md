@@ -121,7 +121,8 @@ Supported options:
 * `--dry-run` (`-D`) - just print information about what is going to be done instead of triggering a real build
 * `--push` - push each created image tag also to the registry
 * `--push-only` - don't build, just push the images
-
+* `--untag` (`-u`) - untag images after build
+* `--prune` - prune images and builder cache
 
 ## The mikdim.yaml configuration file
 
