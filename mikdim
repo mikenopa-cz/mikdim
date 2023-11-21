@@ -110,7 +110,7 @@ def parseOptions():
         "devBuild": False,
         "prodBuild": False,
         "imagePrefix": None,
-        "allowedBranches": ALLOWED_BRANCHES.copy(),
+        "allowedBranches": [],
         "tags": [],
         "project": None,
         "projectVersioning": True,
@@ -184,6 +184,9 @@ def parseOptions():
 
     if not options["devBuild"]:
         options["prodBuild"] = True
+
+    if not options["allowedBranches"]:
+        options["allowedBranches"] += ALLOWED_BRANCHES
 
     return options 
 
