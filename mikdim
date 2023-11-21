@@ -99,6 +99,7 @@ def printHelp():
     print("  -s --semi-tag <tag>            - specify the tag of the semiproduct (default '{}')".format(SEMI_TAG), file=sys.stderr)
     print("  -D --dry-run                   - just print building info and exit", file=sys.stderr)
     print("     --push                      - push the images to the registry (registry login is not part of this command)", file=sys.stderr)
+    print("     --push-only                 - only push the images, don't build", file=sys.stderr)
     print("  -h --help                      - show this help", file=sys.stderr)
 
 def parseOptions():
@@ -117,6 +118,7 @@ def parseOptions():
         "help": False,
         "dryRun": False,
         "push": False,
+        "pushOnly": False,
         "wantedImages": []
     }
     (opts, args) = getopt.getopt(
@@ -125,7 +127,7 @@ def parseOptions():
         [
             "project=", "prefix=", "semi-tag=", "tag=", "allow-branch=", "image=", "allow-all-branches=",
             "dev", "no-project-version", "no-project-branch", "help", "preserve-environment",
-            "git", "gitlab", "dry-run", "prod", "push"
+            "git", "gitlab", "dry-run", "prod", "push", "push-only"
         ]
     )
     for (opt, value) in opts:
@@ -166,6 +168,8 @@ def parseOptions():
             options['dryRun'] = True
         elif (opt == '--push'):
             options['push'] = True
+        elif (opt == '--push-only'):
+            options['pushOnly'] = True
 
     if not options['wantedImages']:
         options['wantedImages'] = None
@@ -244,9 +248,11 @@ def createProjectArchive(tempDir, subdir, excludeDirs):
         excludeArgs.append(re.sub(r'^/*', './', excludeDir))
     cwd = os.getcwd()
     os.chdir(subdir)
-    subprocess.run(["tar", "-czf", archive, "--exclude", "./.git"] + excludeArgs + ["."])
+    if subprocess.run(["tar", "-czf", archive, "--exclude", "./.git"] + excludeArgs + ["."]).returncode != 0:
+        raise Exception("Cannot create archive")
     os.chdir(cwd)
     return archive
+
 createProjectArchive.archiveNumber = 1
 
 def getEnvVars(imageConfig, production):
@@ -274,7 +280,8 @@ def buildSemiProduct(imageConfig, tempDir):
     for img in imageConfig["semiImages"]:
         imageArgs.append("-t");
         imageArgs.append(img)
-    subprocess.run(["docker", "build", "--pull"] + imageArgs + [imageConfig['build']], env=getEnvVars(imageConfig, True))
+    if subprocess.run(["docker", "build", "--pull"] + imageArgs + [imageConfig['build']], env=getEnvVars(imageConfig, True)).returncode != 0:
+        raise Exception("Cannot build semiproduct image")
 
 def buildFinalProduct(imageConfig, tempDir, projectArchive):
     dockerDir = "{}/docker-{}".format(tempDir, imageConfig['name'])
@@ -289,14 +296,19 @@ def buildFinalProduct(imageConfig, tempDir, projectArchive):
         imageArgs.append("-t");
         imageArgs.append(img)
     if imageArgs:
-        subprocess.run(["docker", "build"] + imageArgs + [dockerDir])
+        if subprocess.run(["docker", "build"] + imageArgs + [dockerDir]).returncode != 0:
+            raise Exception("Cannot build final production image")
     else:
         raise Exception("No final tag specified")
     shutil.rmtree(dockerDir)
 
 def pushTags(imageConfig):
+    failed = False
     for image in imageConfig["finalImages"]:
-        subprocess.run(["docker", "push", "--", image])
+        if subprocess.run(["docker", "push", "--", image]).returncode != 0:
+            failed = True
+    if failed:
+        raise Exception("Cannot push tags")
 
 def cleanupBuild(imageConfig, tempDir):
     for tag in imageConfig["cleanupImages"]:
@@ -448,19 +460,22 @@ def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
         print("Warning: no tags given for building this image, skipping", file=sys.stderr)
         return True
 
+    ret = True
     try:
-        invokePrepareCommand(imageConfig, options, devBuild)
-        if not devBuild:
-            archive = createProjectArchive(tempDir, subdir, exclude)
-        buildSemiProduct(imageConfig, tempDir)
-        if not devBuild:
-            buildFinalProduct(imageConfig, tempDir, archive)
-        cleanupBuild(imageConfig, tempDir)
-        if options["push"]:
+        if not options["pushOnly"]:
+            invokePrepareCommand(imageConfig, options, devBuild)
+            if not devBuild:
+                archive = createProjectArchive(tempDir, subdir, exclude)
+            buildSemiProduct(imageConfig, tempDir)
+            if not devBuild:
+                buildFinalProduct(imageConfig, tempDir, archive)
+        if options["push"] or options["pushOnly"]:
             pushTags(imageConfig)
     except Exception as e:
         print("Error: building image {} failed: {}".format(imageConfig["finalImage"], e), file=sys.stderr)
-        return False
+        ret = False
+    cleanupBuild(imageConfig, tempDir)
+    return ret
 
 def run(options):
     file = enterProject(options["project"])
@@ -483,6 +498,8 @@ def run(options):
 
     runIntegrationPlugins(options)
 
+    ok = True
+
     with tempfile.TemporaryDirectory() as tempDir:
         for imageConfig in config["images"]:
             if options["wantedImages"] != None:
@@ -491,16 +508,18 @@ def run(options):
                 processedImages[imageConfig["name"]] = True
             tags = options["integrationTags"] + options["tags"]
             if options["prodBuild"]:
-                processSingleImage(imageConfig, options, tempDir, False, tags)
+                if not processSingleImage(imageConfig, options, tempDir, False, tags):
+                    ok = False
             if options["devBuild"]:
                 if options["prodBuild"]:
                     tags = [DEV_TAG]
-                processSingleImage(imageConfig, options, tempDir, True, tags)
+                if not processSingleImage(imageConfig, options, tempDir, True, tags):
+                    ok = False
         if options["wantedImages"] != None:
             for wantedImage in options["wantedImages"]:
                 if not wantedImage in processedImages:
                     print("Warning: image {} not defined in the mikdim config file, ignoring".format(wantedImage), file=sys.stderr)
-    return 0
+    return 0 if ok else 5
 
 options = parseOptions()
 
