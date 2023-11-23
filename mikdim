@@ -3,9 +3,10 @@
 import sys, getopt, os, subprocess, re, yaml, schema, tempfile, shutil, shlex
 from pprint import pprint
 
-commandName = os.path.dirname(sys.argv[0])
+commandName = os.path.basename(sys.argv[0])
 
 if commandName == 'mikdeb':
+    print("Warning: mikdeb is not yet fully implemented, using this command may end with unexpected behavior!", file=sys.stderr)
     CMD = 'mikdeb'
     DEFAULT_CONFIG = "mikdeb.yaml"
 else:
