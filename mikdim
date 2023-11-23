@@ -3,7 +3,15 @@
 import sys, getopt, os, subprocess, re, yaml, schema, tempfile, shutil, shlex
 from pprint import pprint
 
-DEFAULT_CONFIG = "mikdim.yaml"
+commandName = os.path.dirname(sys.argv[0])
+
+if commandName == 'mikdeb':
+    CMD = 'mikdeb'
+    DEFAULT_CONFIG = "mikdeb.yaml"
+else:
+    CMD = 'mikdim'
+    DEFAULT_CONFIG = "mikdim.yaml"
+
 SEMI_TAG = "semi-tmp"
 DEV_TAG = "dev"
 ALLOWED_BRANCHES = ["production", "staging", "master", "main"]
@@ -80,6 +88,79 @@ INTEGRATION_PLUGINS = {
         "gitlab": integrationPluginGitlab
 }
 
+def optPush(command, args, params):
+    if command == "create":
+        return args["default"] if "default" in args else []
+    elif command == "opt":
+        return [":", "="]
+    elif command == "val":
+        unique = args["unique"] if "unique" in args else True
+        if not unique or not params["val"] in params["oldVal"]:
+            params["oldVal"].append(params["val"])
+        return params["oldVal"]
+
+def optPushNullable(command, args, params):
+    if command == "create":
+        return args["default"] if "default" in args else []
+    elif command == "opt":
+        return [":", "="]
+    elif command == "val":
+        opt = args["opt"].lstrip("-")
+        if "nullableOpts" in args and opt in args["nullableOpts"]:
+            return None
+        if params["oldVal"] == None:
+            return None
+        return optPush(command, args, params)
+
+def optPushOpt(command, args, params):
+    if command == "create":
+        return optPush(command, args, params)
+    elif command == "opt":
+        return ["", ""]
+    elif command == "val":
+        opt = params["opt"].lstrip("-")
+        if "transform" in args and opt in args["transform"]:
+            opt = args["transform"][opt]
+        return optPush(command, args, {"val": opt, "opt": params["opt"]})
+
+def optSetValue(command, args, params):
+    if command == "create":
+        return args["default"] if "default" in args else None
+    elif command == "opt":
+        return [":", "="]
+    elif command == "val":
+        return params["val"]
+
+def optSet(command, args, params):
+    default = True if (args["default"] if "default" in args else False) else False
+    if command == "create":
+        return default
+    elif command == "opt":
+        return ["", ""]
+    elif command == "val":
+        return not default
+
+OPTIONS_ALL = {
+    "integrationPlugins": {"fn": optPushOpt, "opts": ["G", "git", "L", "gitlab"], "transform": {"G": "git", "L": "gitlab"}},
+    "devBuild": {"fn": optSet, "opts": ["d", "dev"], "setIfEmpty": ["prodBuild", True]},
+    "prodBuild": {"fn": optSet, "opts": ["prod"]},
+    "imagePrefix": {"fn": optSetValue, "opts": ["P", "prefix"]},
+    "allowedBranches": {"fn": optPushNullable, "opts": ["a", "allow-branch", "A", "allow-all-branches"], "nullableOpts": ["A", "allow-all-branches"], "setIfEmpty": ["_self", ALLOWED_BRANCHES]},
+    "tags": {"fn": optPush, "opts": ["t", "tag"]},
+    "project": {"fn": optSetValue, "opts": ["p", "project"]},
+    "semiTag": {"fn": optSetValue, "opts": ["s", "semi-tag"], "default": SEMI_TAG},
+    "help": {"fn": optSet, "opts": ["h", "help"]},
+    "projectVersioning": {"fn": optSet, "opts": ["n", "no-project-version"], "default": True},
+    "projectBranchVersioning": {"fn": optSet, "opts": ["b", "no-project-branch"], "default": True},
+    "preserveEnvironment": {"fn": optSet, "opts": ["e", "preserve-environment"]},
+    "wantedImages": {"fn": optPush, "opts": ["i", "image"], "setIfEmpty": ["_self", None]},
+    "dryRun": {"fn": optSet, "opts": ["D", "dry-run"]},
+    "push": {"fn": optSet, "opts": ["push"]},
+    "pushOnly": {"fn": optSet, "opts": ["pushOnly"]},
+    "untag": {"fn": optSet, "opts": ["u", "untag"]},
+    "prune": {"fn": optSet, "opts": ["prune"]},
+}
+
 def printHelp():
     print("usage: {} [options]".format(sys.argv[0]), file=sys.stderr)
     print("options:", file=sys.stderr)
@@ -105,88 +186,40 @@ def printHelp():
     print("  -h --help                      - show this help", file=sys.stderr)
 
 def parseOptions():
-    options = {
-        "integrationPlugins": [],
-        "devBuild": False,
-        "prodBuild": False,
-        "imagePrefix": None,
-        "allowedBranches": [],
-        "tags": [],
-        "project": None,
-        "projectVersioning": True,
-        "projectBranchVersioning": True,
-        "preserveEnvironment": False,
-        "semiTag": SEMI_TAG,
-        "help": False,
-        "dryRun": False,
-        "push": False,
-        "pushOnly": False,
-        "untag": False,
-        "prune": False,
-        "wantedImages": []
-    }
-    (opts, args) = getopt.getopt(
-        sys.argv[1:],
-        "dt:p:P:s:a:i:AhnbeGLDu",
-        [
-            "project=", "prefix=", "semi-tag=", "tag=", "allow-branch=", "image=", "allow-all-branches=",
-            "dev", "no-project-version", "no-project-branch", "help", "preserve-environment",
-            "git", "gitlab", "dry-run", "prod", "push", "push-only", "untag", "prune"
-        ]
-    )
+    optionsDef = OPTIONS_ALL
+
+    options = {}
+    shortOpts = ""
+    longOpts = []
+    optMap = {}
+
+    for (key, optDef) in optionsDef.items():
+        fn = optDef["fn"]
+        options[key] = fn("create", optDef, {})
+        (shortSuffix, longSuffix) = fn("opt", optDef, {})
+        for opt in optDef["opts"]:
+            if len(opt) > 0:
+                if len(opt) == 1:
+                    optMap["-" + opt] = key
+                    shortOpts += opt + shortSuffix
+                else:
+                    optMap["--" + opt] = key
+                    longOpts += [opt + longSuffix]
+
+
+    (opts, args) = getopt.getopt(sys.argv[1:], shortOpts, longOpts)
     for (opt, value) in opts:
-        if (opt == '-d' or opt == '--dev'):
-            options["devBuild"] = True
-        elif (opt == '--prod'):
-            options['prodBuild'] = True
-        elif (opt == '-t' or opt == '--tag'):
-            options["tags"].append(value)
-        elif (opt == '-p' or opt == '--project'):
-            options["project"] = value
-        elif (opt == '-P' or opt == '--prefix'):
-            options["imagePrefix"] = value
-        elif (opt == '-s' or opt == '--semi-tag'):
-            options['semiTag'] = value
-        elif (opt == '-h' or opt == '--help'):
-        	options['help']= True
-        elif (opt == '-n' or opt == '--no-project-version'):
-        	options['projectVersioning']= False
-        elif (opt == '-b' or opt == '--no-project-branch'):
-        	options['projectBranchVersioning']= False
-        elif (opt == '-e' or opt == '--preserve-environment'):
-        	options['preserveEnvironment']= True
-        elif (opt == '-a' or opt == '--allow-branch'):
-            if options['allowedBranches'] != None:
-                options['allowedBranches'].append(value)
-        elif (opt == '-A' or opt == '--allow-all-branches'):
-            options['allowedBranches'] = None
-        elif (opt == '-i' or opt == '--image'):
-        	options['wantedImages'].append(value)
-        elif (opt == '-G' or opt == '--git'):
-            if not "git" in options["integrationPlugins"]:
-                options['integrationPlugins'].append("git")
-        elif (opt == '-L' or opt == '--gitlab'):
-            if not "gitlab" in options["integrationPlugins"]:
-                options['integrationPlugins'].append("gitlab")
-        elif (opt == '-D' or opt == '--dry-run'):
-            options['dryRun'] = True
-        elif (opt == '--push'):
-            options['push'] = True
-        elif (opt == '--push-only'):
-            options['pushOnly'] = True
-        elif (opt == '-u' or opt == '--untag'):
-            options['untag'] = True
-        elif (opt == '--prune'):
-            options['prune'] = True
+        key = optMap[opt]
+        optDef = optionsDef[key]
+        fn = optDef["fn"]
+        options[key] = fn("val", optDef, {"opt": opt, "val": value, "oldVal": options[key]})
 
-    if not options['wantedImages']:
-        options['wantedImages'] = None
-
-    if not options["devBuild"]:
-        options["prodBuild"] = True
-
-    if not options["allowedBranches"]:
-        options["allowedBranches"] += ALLOWED_BRANCHES
+    for (key, optDef) in optionsDef.items():
+        if "setIfEmpty" in optDef and not options[key]:
+            (myKey, myValue) = optDef["setIfEmpty"]
+            if myKey == "_self" or myKey == None:
+                myKey = key
+            options[myKey] = myValue
 
     return options 
 
