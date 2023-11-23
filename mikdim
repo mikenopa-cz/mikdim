@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import sys, getopt, os, subprocess, re, yaml, schema, tempfile, shutil, shlex
+import sys, getopt, os, subprocess, re, yaml, schema, tempfile, shutil, shlex, glob
 from pprint import pprint
 
 commandName = os.path.basename(sys.argv[0])
@@ -50,17 +50,35 @@ base_dir={baseDir}
 package_subdir={packageSubdir}
 archive_file={archiveFile}
 postprocess_script={postprocessScript}
+control_file={controlFile}
 final_dir={finalDir}
+package_name={packageName}
+rm -rf "$base_dir/*.deb"
 mkdir -p "$base_dir/$package_subdir/DEBIAN"
+mv "$base_dir/$control_file" "$base_dir/$package_subdir/DEBIAN/control"
 mkdir -p "$base_dir/$package_subdir/$final_dir"
 cd "$base_dir/$package_subdir/$final_dir"
 tar xzf "$base_dir/$archive_file"
+rm "$base_dir/$archive_file"
+chown -R root:root "$base_dir/$package_subdir"
 if [ -n "$postprocess_script" ]; then
     export ROOT_DIR="$base_dir/$package_subdir"
     export PACKAGE_DIR="`pwd`"
     eval "$postprocess_script"
 fi
+cd "$base_dir"
+dpkg-deb -b "$package_subdir" .
+rm -rf "$package_subdir"
+mkdir "$package_subdir"
+mv *.deb "$package_subdir/"
+chown --reference="$0" -R "$package_subdir"
+rm "$0"
 """
+
+DEBIAN_CONTROL_FILE_KEYS = [
+        "Package", "Version", "Maintainer", "Architecture", "Depends",
+        "Provides", "Conflicts", "Description", "LongDescription"
+]
 
 SCHEMA = {
     "mikdim": {
@@ -616,11 +634,8 @@ def processImage(imageConfig, options, tempDir):
             ok = False
     return ok
 
-def createBuildScript(packageConfig, archiveFile, tempDir):
-    buildId = createBuildScript.buildId
-    createBuildScript.buildId += 1
-    packageSubdir = packageConfig["name"] + "-" + str(buildId)
-    buildScript = "build-" + str(buildId) + ".sh"
+def createBuildScript(packageConfig, archiveFile, controlFile, tempDir):
+    buildScript = "build-" + str(packageConfig["buildId"]) + ".sh"
     postprocessScript = packageConfig["postprocess"] if "postprocess" in packageConfig else ""
     finalDir = packageConfig["project-dir"] if "project-dir" in packageConfig else "/"
     finalDir = finalDir.lstrip("/")
@@ -631,20 +646,58 @@ def createBuildScript(packageConfig, archiveFile, tempDir):
         buildScript,
         DPKG_DEB_CONTENT,
         baseDir=shlex.quote(packageConfig["buildDir"]),
-        packageSubdir=shlex.quote(packageSubdir),
+        packageSubdir=shlex.quote(packageConfig["packageSubdir"]),
         archiveFile=shlex.quote(archiveFile),
         postprocessScript=shlex.quote(postprocessScript),
+        controlFile=shlex.quote(controlFile),
+        packageName=shlex.quote(packageConfig["name"]),
         finalDir=shlex.quote(finalDir)
     )
     return buildScript
-createBuildScript.buildId = 1
+
+def createDebianControlFile(packageConfig, tempDir):
+    filename = "control-" + str(packageConfig["buildId"])
+    data = {
+        "Package": packageConfig["name"],
+        "Version": packageConfig["version"],
+        "Maintainer": "Mikenopa R&D <rd@mikenopa.com>",
+        "Architecture": packageConfig["architecture"],
+        "Depends": None,
+        "Provides": None,
+        "Conflicts": None,
+        "Description": packageConfig["name"],
+        "LongDescription": None
+    }
+
+    controlContent = ""
+    for key in DEBIAN_CONTROL_FILE_KEYS:
+        value = data[key] if key in data else None
+        if value != None:
+            if key != "LongDescription":
+                controlContent+="{}: {}\n".format(key, value)
+            else:
+                controlContent+=" {}\n".format(value)
+    putFile(tempDir, filename, controlContent)
+    return filename
+
 
 def buildDebianPackage(packageConfig, buildScript, tempDir):
     fullBuildScript = packageConfig["buildDir"] + "/" + buildScript
     volume = tempDir + ":" + packageConfig["buildDir"]
     if subprocess.run(["docker", "run", "-t", "-v", volume, "--user", "root", "--", packageConfig["buildImage"], "bash", fullBuildScript]).returncode != 0:
         raise Exception("Cannot build debian package")
-    return ".deb"
+    
+    debFiles = glob.glob(tempDir + "/" + packageConfig["packageSubdir"] + "/*.deb")
+    if len(debFiles) != 1:
+        if len(debFiles) > 1:
+            raise Exception("For some reason, multiple debian packages were created, giving up. (Maybe a bug?)")
+        raise Exception("Debian package was not created")
+    return debFiles[0]
+
+def cleanupDebianBuild(packageConfig, tempDir, success):
+    if not success:
+        volume = tempDir + ":" + packageConfig["buildDir"]
+        subprocess.run(["docker", "run", "-t", "-v", volume, "--user", "root", "--", packageConfig["buildImage"], "bash", "-c", "rm -rf /tmp/*"])
 
 def processDebianPackage(packageConfig, options, tempDir):
     ret = True
@@ -652,28 +705,39 @@ def processDebianPackage(packageConfig, options, tempDir):
     packageConfig["preserveEnvironment"] = options["preserveEnvironment"]
     packageConfig["buildImage"] = "debian:latest"
     packageConfig["buildDir"] = "/tmp"
+    packageConfig["outputDir"] = "."
+    packageConfig["buildId"] = processDebianPackage.buildId
+    packageConfig["packageSubdir"] = packageConfig["name"] + "-" + str(packageConfig["buildId"])
+    packageConfig["version"] = "1.0.0"
+    packageConfig["architecture"] = "all"
+    processDebianPackage.buildId += 1
     
+    print("Building package {} version {} for architecture {}".format(
+        packageConfig["name"], packageConfig["version"], packageConfig["architecture"]
+    ), file=sys.stderr)
+    print("", file=sys.stderr)
+
+    if options["dryRun"]:
+        return True
+
     try:
+        if not os.path.isdir(packageConfig["outputDir"]):
+            raise Exception("Output directory does not exist")
         envVars = getEnvVars(packageConfig, False)
         invokePrepareCommand(packageConfig, False, envVars)
         archive = createProjectArchive(tempDir, packageConfig)
-        buildScript = createBuildScript(packageConfig, os.path.basename(archive), tempDir)
+        controlFile = createDebianControlFile(packageConfig, tempDir)
+        buildScript = createBuildScript(packageConfig, os.path.basename(archive), controlFile, tempDir)
         
         debPackage = buildDebianPackage(packageConfig, buildScript, tempDir)
 
-        #FIXME: remove
-        print("debPackage: {}".format(debPackage))
-        cwd = os.getcwd()
-        os.chdir(tempDir)
-        subprocess.run(["bash"])
-        os.chdir(cwd)
-        volume = tempDir + ":" + packageConfig["buildDir"]
-        subprocess.run(["docker", "run", "-t", "-v", volume, "--user", "root", "--", packageConfig["buildImage"], "bash", "-c", "rm -rf /tmp/*"])
-        raise Exception("processing debian package not implemented")
+        os.rename(debPackage, packageConfig["outputDir"] + "/" + os.path.basename(debPackage))
     except Exception as e:
         print("Error: building debian package {} failed: {}".format(packageConfig["name"], e), file=sys.stderr)
         ret = False
+    cleanupDebianBuild(packageConfig, tempDir, ret)
     return ret
+processDebianPackage.buildId = 1
 
 APP_CONFIG = {
     "mikdim": {
