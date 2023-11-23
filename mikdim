@@ -6,7 +6,7 @@ from pprint import pprint
 commandName = os.path.basename(sys.argv[0])
 
 if commandName == 'mikdeb':
-    print("Warning: mikdeb is not yet fully implemented, using this command may end with unexpected behavior!", file=sys.stderr)
+    print("Warning: mikdeb is not yet fully implemented!", file=sys.stderr)
     CMD = 'mikdeb'
     DEFAULT_CONFIG = "mikdeb.yaml"
 else:
@@ -39,6 +39,46 @@ fi
 rm -f "/tmp/archive.tar.gz"
 rm -f "/tmp/postprocess.sh"
 """
+
+SCHEMA = {
+    "mikdim": {
+        "images": [
+            {
+                "name": str,
+                "build": str,
+                schema.Optional("prepare-command"): schema.Or(str, [str]),
+                schema.Optional("prepare-command-dev"): schema.Or(str, [str]),
+                schema.Optional("project-dir"): str,
+                schema.Optional("postprocess"): str,
+                schema.Optional("environment"): {
+                    schema.Optional(str): schema.Or(str, None)
+                },
+                schema.Optional("environment-dev"): {
+                    schema.Optional(str): schema.Or(str, None)
+                },
+                schema.Optional("subdir"): str,
+                schema.Optional("exclude"): [str],
+                schema.Optional(str): object
+            }
+        ]
+    },
+    "mikdeb": {
+        "debian-packages": [
+            {
+                "name": str,
+                schema.Optional("prepare-command"): schema.Or(str, [str]),
+                schema.Optional("project-dir"): str,
+                schema.Optional("postprocess"): str,
+                schema.Optional("environment"): {
+                    schema.Optional(str): schema.Or(str, None)
+                },
+                schema.Optional("subdir"): str,
+                schema.Optional("exclude"): [str],
+                schema.Optional(str): object
+            }
+        ]
+    }
+}
 
 def integrationPluginGit(options, detect):
     data = {}
@@ -122,7 +162,7 @@ def optPushOpt(command, args, params):
         opt = params["opt"].lstrip("-")
         if "transform" in args and opt in args["transform"]:
             opt = args["transform"][opt]
-        return optPush(command, args, {"val": opt, "opt": params["opt"]})
+        return optPush(command, args, {"val": opt, "opt": params["opt"], "oldVal": params["oldVal"]})
 
 def optSetValue(command, args, params):
     if command == "create":
@@ -143,51 +183,83 @@ def optSet(command, args, params):
 
 OPTIONS_ALL = {
     "integrationPlugins": {"fn": optPushOpt, "opts": ["G", "git", "L", "gitlab"], "transform": {"G": "git", "L": "gitlab"}},
-    "devBuild": {"fn": optSet, "opts": ["d", "dev"], "setIfEmpty": ["prodBuild", True]},
-    "prodBuild": {"fn": optSet, "opts": ["prod"]},
-    "imagePrefix": {"fn": optSetValue, "opts": ["P", "prefix"]},
-    "allowedBranches": {"fn": optPushNullable, "opts": ["a", "allow-branch", "A", "allow-all-branches"], "nullableOpts": ["A", "allow-all-branches"], "setIfEmpty": ["_self", ALLOWED_BRANCHES]},
-    "tags": {"fn": optPush, "opts": ["t", "tag"]},
     "project": {"fn": optSetValue, "opts": ["p", "project"]},
-    "semiTag": {"fn": optSetValue, "opts": ["s", "semi-tag"], "default": SEMI_TAG},
-    "help": {"fn": optSet, "opts": ["h", "help"]},
-    "projectVersioning": {"fn": optSet, "opts": ["n", "no-project-version"], "default": True},
-    "projectBranchVersioning": {"fn": optSet, "opts": ["b", "no-project-branch"], "default": True},
     "preserveEnvironment": {"fn": optSet, "opts": ["e", "preserve-environment"]},
-    "wantedImages": {"fn": optPush, "opts": ["i", "image"], "setIfEmpty": ["_self", None]},
     "dryRun": {"fn": optSet, "opts": ["D", "dry-run"]},
-    "push": {"fn": optSet, "opts": ["push"]},
-    "pushOnly": {"fn": optSet, "opts": ["pushOnly"]},
-    "untag": {"fn": optSet, "opts": ["u", "untag"]},
-    "prune": {"fn": optSet, "opts": ["prune"]},
+    "help": {"fn": optSet, "opts": ["h", "help"]}
 }
+
+OPTIONS_SPECIFIC = {
+    "mikdim": {
+        "devBuild": {"fn": optSet, "opts": ["d", "dev"], "setIfEmpty": ["prodBuild", True]},
+        "prodBuild": {"fn": optSet, "opts": ["prod"]},
+        "imagePrefix": {"fn": optSetValue, "opts": ["P", "prefix"]},
+        "allowedBranches": {"fn": optPushNullable, "opts": ["a", "allow-branch", "A", "allow-all-branches"], "nullableOpts": ["A", "allow-all-branches"], "setIfEmpty": ["_self", ALLOWED_BRANCHES]},
+        "tags": {"fn": optPush, "opts": ["t", "tag"]},
+        "semiTag": {"fn": optSetValue, "opts": ["s", "semi-tag"], "default": SEMI_TAG},
+        "projectVersioning": {"fn": optSet, "opts": ["n", "no-project-version"], "default": True},
+        "projectBranchVersioning": {"fn": optSet, "opts": ["b", "no-project-branch"], "default": True},
+        "wantedObjects": {"fn": optPush, "opts": ["i", "image"], "setIfEmpty": ["_self", None]},
+        "push": {"fn": optSet, "opts": ["push"]},
+        "pushOnly": {"fn": optSet, "opts": ["pushOnly"]},
+        "untag": {"fn": optSet, "opts": ["u", "untag"]},
+        "prune": {"fn": optSet, "opts": ["prune"]}
+    },
+    "mikdeb": {
+        "wantedObjects": {"fn": optPush, "opts": ["P", "package"], "setIfEmpty": ["_self", None]},
+    }
+}
+
+def helpPrint(options):
+    finalOpts = []
+    shortOptsLen = 0
+    longOptsLen = 0
+    for optionDef in options:
+        [short, long, description, command, *x] = optionDef + [None]
+        if command != None and CMD != command:
+            continue
+        shortOptsLen = max(shortOptsLen, len(short))
+        longOptsLen = max(longOptsLen, len(long))
+        finalOpts.append(optionDef)
+    for optionDef in finalOpts:
+        [short, long, description, *x] = optionDef
+        shortLen = shortOptsLen - len(short)
+        longLen = longOptsLen - len(long)
+        print("  {}{} {}{}  - {}".format(short, " " * shortLen, long, " " * longLen, description), file=sys.stderr)
 
 def printHelp():
     print("usage: {} [options]".format(sys.argv[0]), file=sys.stderr)
     print("options:", file=sys.stderr)
-    print("  -d --dev                       - invoke dev build of the images")
-    print("     --prod                      - invoke prod build of the images")
-    print("  -t --tag <tag>                 - specify some another special tag", file=sys.stderr)
-    print("  -p --project <project>         - specify directory or config file of the project where images should be built", file=sys.stderr)
-    print("  -P --prefix <image-prefix>     - specify image prefix", file=sys.stderr)
-    print("  -G --git                       - Use branch/version from git", file=sys.stderr)
-    print("  -L --gitlab                    - Use branch/version from gitlab CI variables", file=sys.stderr)
-    print("  -n --no-project-version        - disable project version tagging (use with --git or --gitlab)", file=sys.stderr)
-    print("  -b --no-project-branch         - disable project branch tagging (use with --git or --gitlab)", file=sys.stderr)
-    print("  -e --preserve-environment      - preserve environment variables", file=sys.stderr)
-    print("  -a --allow-branch <branch>     - allow branch name (default branch names if none given are {})".format(", ".join(ALLOWED_BRANCHES)), file=sys.stderr)
-    print("  -A --allow-all-branches        - allow all branch names", file=sys.stderr)
-    print("  -i --image <image-name>        - build only this image (multiple images may be specified)", file=sys.stderr)
-    print("  -s --semi-tag <tag>            - specify the tag of the semiproduct (default '{}')".format(SEMI_TAG), file=sys.stderr)
-    print("  -D --dry-run                   - just print building info and exit", file=sys.stderr)
-    print("     --push                      - push the images to the registry (registry login is not part of this command)", file=sys.stderr)
-    print("     --push-only                 - only push the images, don't build", file=sys.stderr)
-    print("  -u --untag                     - untag images after build (and push) is finished", file=sys.stderr)
-    print("     --prune                     - prune the image and builder cache", file=sys.stderr)
-    print("  -h --help                      - show this help", file=sys.stderr)
+    helpPrint([
+        ["-d", "--dev",                    "invoke dev build of the images", "mikdim"],
+        ["",   "--prod",                   "invoke prod build of the images", "mikdim"],
+        ["-t", "--tag <tag>",              "specify some another special tag", "mikdim"],
+        ["-p", "--project <project>",      "specify directory or config file of the project where images should be built"],
+        ["-P", "--prefix <image-prefix>",  "specify image prefix", "mikdim"],
+        ["-G", "--git",                    "Use branch/version from git", "mikdim"],
+        ["-G", "--git",                    "Use version from git", "mikdeb"],
+        ["-L", "--gitlab",                 "Use branch/version from gitlab CI variables", "mikdim"],
+        ["-L", "--gitlab",                 "Use version from gitlab CI variables", "mikdeb"],
+        ["-n", "--no-project-version",     "disable project version tagging (use with --git or --gitlab)", "mikdim"],
+        ["-b", "--no-project-branch",      "disable project branch tagging (use with --git or --gitlab)", "mikdim"],
+        ["-e", "--preserve-environment",   "preserve environment variables"],
+        ["-a", "--allow-branch <branch>",  "allow branch name (default branch names if none given are {})".format(", ".join(ALLOWED_BRANCHES)), "mikdim"],
+        ["-A", "--allow-all-branches",     "allow all branch names", "mikdim"],
+        ["-i", "--image <image-name>",     "build only this image (multiple images may be specified)", "mikdim"],
+        ["-P", "--package <package-name>", "build only this package (multiple packages may be specified)", "mikdeb"],
+        ["-s", "--semi-tag <tag>",         "specify the tag of the semiproduct (default '{}')".format(SEMI_TAG), "mikdim"],
+        ["-D", "--dry-run",                "just print building info and exit"],
+        ["",   "--push",                   "push the images to the registry (registry login is not part of this command)", "mikdim"],
+        ["",   "--push-only",              "only push the images, don't build", "mikdim"],
+        ["-u", "--untag",                  "untag images after build (and push) is finished", "mikdim"],
+        ["",   "--prune",                  "prune the image and builder cache", "mikdim"],
+        ["-h", "--help",                   "show this help"]
+    ])
 
 def parseOptions():
-    optionsDef = OPTIONS_ALL
+    optionsDef = {}
+    optionsDef.update(OPTIONS_ALL)
+    optionsDef.update(OPTIONS_SPECIFIC[CMD])
 
     options = {}
     shortOpts = ""
@@ -246,27 +318,7 @@ def loadConfig(file):
     return config
 
 def checkConfig(config):
-    configSchema = schema.Schema({
-        "images": [
-            {
-                "name": str,
-                "build": str,
-                schema.Optional("prepare-command"): schema.Or(str, [str]),
-                schema.Optional("prepare-command-dev"): schema.Or(str, [str]),
-                schema.Optional("project-dir"): str,
-                schema.Optional("postprocess"): str,
-                schema.Optional("environment"): {
-                    schema.Optional(str): schema.Or(str, None)
-                },
-                schema.Optional("environment-dev"): {
-                    schema.Optional(str): schema.Or(str, None)
-                },
-                schema.Optional("subdir"): str,
-                schema.Optional("exclude"): [str],
-                schema.Optional(str): object
-            }
-        ]
-    })
+    configSchema = schema.Schema(SCHEMA[CMD])
     try:
         return configSchema.validate(config)
     except:
@@ -300,8 +352,8 @@ def createProjectArchive(tempDir, subdir, excludeDirs):
 
 createProjectArchive.archiveNumber = 1
 
-def getEnvVars(imageConfig, production):
-    envKey = 'environment' if production else 'environment-dev'
+def getEnvVars(imageConfig, devBuild):
+    envKey = 'environment-dev' if devBuild else 'environment'
     env = None
     if not imageConfig['preserveEnvironment']:
         env = {}
@@ -316,7 +368,7 @@ def getEnvVars(imageConfig, production):
             del env[var]
     return env
 
-def buildSemiProduct(imageConfig, tempDir):
+def buildSemiProduct(imageConfig, tempDir, envVars):
     if not os.path.isdir(imageConfig['build']):
         raise Exception("Build directory of image '{}' is not a directory".format(imageConfig['finalImage']))
     if not os.path.isfile("{}/Dockerfile".format(imageConfig['build'])):
@@ -325,7 +377,7 @@ def buildSemiProduct(imageConfig, tempDir):
     for img in imageConfig["semiImages"]:
         imageArgs.append("-t");
         imageArgs.append(img)
-    if subprocess.run(["docker", "build", "--pull"] + imageArgs + [imageConfig['build']], env=getEnvVars(imageConfig, True)).returncode != 0:
+    if subprocess.run(["docker", "build", "--pull"] + imageArgs + [imageConfig['build']], env=envVars).returncode != 0:
         raise Exception("Cannot build semiproduct image")
 
 def buildFinalProduct(imageConfig, tempDir, projectArchive):
@@ -444,16 +496,16 @@ def runIntegrationPlugins(options):
             tags.append(branch)
 
     options["integrationTags"] = tags
-    if options["imagePrefix"] == None and "imagePrefix" in data:
+    if (not "imagePrefix" in options or options["imagePrefix"] == None) and "imagePrefix" in data:
         options["imagePrefix"] = data["imagePrefix"]
 
-def invokePrepareCommand(imageConfig, options, devBuild):
+def invokePrepareCommand(objectConfig, devBuild, envVars):
     if devBuild:
         prepareCommandKey = 'prepare-command-dev'
     else:
         prepareCommandKey = 'prepare-command'
 
-    prepareCommand = imageConfig[prepareCommandKey] if 'prepare-command' in imageConfig else None
+    prepareCommand = objectConfig[prepareCommandKey] if 'prepare-command' in objectConfig else None
 
     if isinstance(prepareCommand, str):
         prepareCommand = ["bash", "-c", prepareCommand]
@@ -462,7 +514,7 @@ def invokePrepareCommand(imageConfig, options, devBuild):
         return
     if not prepareCommand:
         raise Exception("Cannot invoke empty prepare command")
-    if subprocess.run(prepareCommand).returncode != 0:
+    if subprocess.run(prepareCommand, env=envVars).returncode != 0:
         raise Exception("Prepare command failed")
 
 
@@ -513,11 +565,12 @@ def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
 
     ret = True
     try:
+        envVars = getEnvVars(imageConfig, devBuild)
         if not options["pushOnly"]:
-            invokePrepareCommand(imageConfig, options, devBuild)
+            invokePrepareCommand(imageConfig, devBuild, envVars)
             if not devBuild:
                 archive = createProjectArchive(tempDir, subdir, exclude)
-            buildSemiProduct(imageConfig, tempDir)
+            buildSemiProduct(imageConfig, tempDir, envVars)
             if not devBuild:
                 buildFinalProduct(imageConfig, tempDir, archive)
         if options["push"] or options["pushOnly"]:
@@ -528,7 +581,44 @@ def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
     cleanupBuild(imageConfig, tempDir)
     return ret
 
+def processImage(imageConfig, options, tempDir):
+    ok = True
+    tags = options["integrationTags"] + options["tags"]
+    if options["prodBuild"]:
+        if not processSingleImage(imageConfig, options, tempDir, False, tags):
+            ok = False
+    if options["devBuild"]:
+        if options["prodBuild"]:
+            tags = [DEV_TAG]
+        if not processSingleImage(imageConfig, options, tempDir, True, tags):
+            ok = False
+    return ok
+
+def processDebianPackage(packageConfig, options, tempDir):
+    ret = True
+    try:
+        pass
+        raise Exception("processing debian package not implemented")
+    except Exception as e:
+        print("Error: building debian package {} failed: {}".format(packageConfig["name"], e), file=sys.stderr)
+        ret = False
+    return ret
+
+APP_CONFIG = {
+    "mikdim": {
+        "processor": processImage,
+        "configItemsKey": "images",
+        "errorMessage": lambda name: "Warning: image {} not defined in the mikdim config file, ignoring".format(name)
+    },
+    "mikdeb": {
+        "processor": processDebianPackage,
+        "configItemsKey": "debian-packages",
+        "errorMessage": lambda name: "Warning: debian package {} not defined in the mikdeb config file, ignoring".format(name)
+    }
+}
+
 def run(options):
+    appConfig = APP_CONFIG[CMD]
     file = enterProject(options["project"])
     if file == None:
         print("Error: config file not found", file=sys.stderr)
@@ -545,31 +635,24 @@ def run(options):
         print("Error: config file is invalid", file=sys.stderr)
         return 4
     
-    processedImages = {}
+    processedObjects = {}
 
     runIntegrationPlugins(options)
 
     ok = True
 
     with tempfile.TemporaryDirectory() as tempDir:
-        for imageConfig in config["images"]:
-            if options["wantedImages"] != None:
-                if not imageConfig["name"] in options["wantedImages"]:
+        for objectConfig in config[appConfig["configItemsKey"]]:
+            if options["wantedObjects"] != None:
+                if not objectConfig["name"] in options["wantedObjects"]:
                     continue
-                processedImages[imageConfig["name"]] = True
-            tags = options["integrationTags"] + options["tags"]
-            if options["prodBuild"]:
-                if not processSingleImage(imageConfig, options, tempDir, False, tags):
-                    ok = False
-            if options["devBuild"]:
-                if options["prodBuild"]:
-                    tags = [DEV_TAG]
-                if not processSingleImage(imageConfig, options, tempDir, True, tags):
-                    ok = False
-        if options["wantedImages"] != None:
-            for wantedImage in options["wantedImages"]:
-                if not wantedImage in processedImages:
-                    print("Warning: image {} not defined in the mikdim config file, ignoring".format(wantedImage), file=sys.stderr)
+                processedObjects[objectConfig["name"]] = True
+            if not appConfig["processor"](objectConfig, options, tempDir):
+                ok = False
+        if options["wantedObjects"] != None:
+            for wantedObject in options["wantedObjects"]:
+                if not wantedObject in processedObjects:
+                    print(appConfig["errorMessage"](wantedObject), file=sys.stderr)
     return 0 if ok else 5
 
 options = parseOptions()
