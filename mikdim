@@ -642,7 +642,8 @@ createBuildScript.buildId = 1
 def buildDebianPackage(packageConfig, buildScript, tempDir):
     fullBuildScript = packageConfig["buildDir"] + "/" + buildScript
     volume = tempDir + ":" + packageConfig["buildDir"]
-    subprocess.run(["docker", "run", "-t", "-v", volume, "--user", "root", "--", packageConfig["buildImage"], "bash", fullBuildScript])
+    if subprocess.run(["docker", "run", "-t", "-v", volume, "--user", "root", "--", packageConfig["buildImage"], "bash", fullBuildScript]).returncode != 0:
+        raise Exception("Cannot build debian package")
     return ".deb"
 
 def processDebianPackage(packageConfig, options, tempDir):
