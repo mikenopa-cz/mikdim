@@ -15,10 +15,11 @@ else:
 
 SEMI_TAG = "semi-tmp"
 DEV_TAG = "dev"
+DEBIAN_ARCHITECTURES = ["all", "arm64", "amd64", "armel", "armhf", "i386", "mips64el", "ppc64el", "riscv64", "s390x"]
 ALLOWED_BRANCHES = ["production", "staging", "master", "main"]
 SEMVER_REGEXP = '^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+)?$'
-
 DEBIAN_BUILD_DOCKER_IMAGE = "debian:latest"
+DEBIAN_BUILD_DOCKER_IMAGE_MOUNT = "/tmp"
 
 DOCKERFILE_CONTENT = """# Dockerfile for building {finalImage} from {image} 
 FROM {image}
@@ -77,7 +78,7 @@ rm "$0"
 
 DEBIAN_CONTROL_FILE_KEYS = [
         "Package", "Version", "Maintainer", "Architecture", "Depends",
-        "Provides", "Conflicts", "Description", "LongDescription"
+        "Provides", "Conflicts", "Description"
 ]
 
 SCHEMA = {
@@ -114,6 +115,9 @@ SCHEMA = {
                 },
                 schema.Optional("subdir"): str,
                 schema.Optional("exclude"): [str],
+                schema.Optional("architecture"): schema.Or(*DEBIAN_ARCHITECTURES),
+                schema.Optional("description"): str,
+                schema.Optional("long-description"): str,
                 schema.Optional(str): object
             }
         ]
@@ -247,6 +251,9 @@ OPTIONS_SPECIFIC = {
     },
     "mikdeb": {
         "wantedObjects": {"fn": optPush, "opts": ["P", "package"], "setIfEmpty": ["_self", None]},
+        "projectVersion": {"fn": optSetValue, "opts": ["V", "project-version"]},
+        "buildImage": {"fn": optSetValue, "opts": ["i", "image"], "default": DEBIAN_BUILD_DOCKER_IMAGE},
+        "buildImageMount": {"fn": optSetValue, "opts": ["i", "image"], "default": DEBIAN_BUILD_DOCKER_IMAGE_MOUNT},
     }
 }
 
@@ -271,29 +278,32 @@ def printHelp():
     print("usage: {} [options]".format(sys.argv[0]), file=sys.stderr)
     print("options:", file=sys.stderr)
     helpPrint([
-        ["-d", "--dev",                    "invoke dev build of the images", "mikdim"],
-        ["",   "--prod",                   "invoke prod build of the images", "mikdim"],
-        ["-t", "--tag <tag>",              "specify some another special tag", "mikdim"],
-        ["-p", "--project <project>",      "specify directory or config file of the project where images should be built"],
-        ["-P", "--prefix <image-prefix>",  "specify image prefix", "mikdim"],
-        ["-G", "--git",                    "Use branch/version from git", "mikdim"],
-        ["-G", "--git",                    "Use version from git", "mikdeb"],
-        ["-L", "--gitlab",                 "Use branch/version from gitlab CI variables", "mikdim"],
-        ["-L", "--gitlab",                 "Use version from gitlab CI variables", "mikdeb"],
-        ["-n", "--no-project-version",     "disable project version tagging (use with --git or --gitlab)", "mikdim"],
-        ["-b", "--no-project-branch",      "disable project branch tagging (use with --git or --gitlab)", "mikdim"],
-        ["-e", "--preserve-environment",   "preserve environment variables"],
-        ["-a", "--allow-branch <branch>",  "allow branch name (default branch names if none given are {})".format(", ".join(ALLOWED_BRANCHES)), "mikdim"],
-        ["-A", "--allow-all-branches",     "allow all branch names", "mikdim"],
-        ["-i", "--image <image-name>",     "build only this image (multiple images may be specified)", "mikdim"],
-        ["-P", "--package <package-name>", "build only this package (multiple packages may be specified)", "mikdeb"],
-        ["-s", "--semi-tag <tag>",         "specify the tag of the semiproduct (default '{}')".format(SEMI_TAG), "mikdim"],
-        ["-D", "--dry-run",                "just print building info and exit"],
-        ["",   "--push",                   "push the images to the registry (registry login is not part of this command)", "mikdim"],
-        ["",   "--push-only",              "only push the images, don't build", "mikdim"],
-        ["-u", "--untag",                  "untag images after build (and push) is finished", "mikdim"],
-        ["",   "--prune",                  "prune the image and builder cache", "mikdim"],
-        ["-h", "--help",                   "show this help"]
+        ["-d", "--dev",                     "invoke dev build of the images", "mikdim"],
+        ["",   "--prod",                    "invoke prod build of the images", "mikdim"],
+        ["-t", "--tag <tag>",               "specify some another special tag", "mikdim"],
+        ["-p", "--project <project>",       "specify directory or config file of the project where images should be built"],
+        ["-P", "--prefix <image-prefix>",   "specify image prefix", "mikdim"],
+        ["-G", "--git",                     "Use branch/version from git", "mikdim"],
+        ["-G", "--git",                     "Use version from git", "mikdeb"],
+        ["-L", "--gitlab",                  "Use branch/version from gitlab CI variables", "mikdim"],
+        ["-L", "--gitlab",                  "Use version from gitlab CI variables", "mikdeb"],
+        ["-V", "--project-version",         "Specify project version", "mikdeb"],
+        ["-n", "--no-project-version",      "disable project version tagging (use with --git or --gitlab)", "mikdim"],
+        ["-b", "--no-project-branch",       "disable project branch tagging (use with --git or --gitlab)", "mikdim"],
+        ["-e", "--preserve-environment",    "preserve environment variables"],
+        ["-a", "--allow-branch <branch>",   "allow branch name (default branch names if none given are {})".format(", ".join(ALLOWED_BRANCHES)), "mikdim"],
+        ["-A", "--allow-all-branches",      "allow all branch names", "mikdim"],
+        ["-i", "--image <image-name>",      "build only this image (multiple images may be specified)", "mikdim"],
+        ["-i", "--image <image-name>",      "build debian package using this docker image (default '{}')".format(DEBIAN_BUILD_DOCKER_IMAGE), "mikdeb"],
+        ["-w", "--image-working-dir <dir>", "empty directory inside of the building image (default '{}')".format(DEBIAN_BUILD_DOCKER_IMAGE_MOUNT), "mikdeb"],
+        ["-P", "--package <package-name>",  "build only this package (multiple packages may be specified)", "mikdeb"],
+        ["-s", "--semi-tag <tag>",          "specify the tag of the semiproduct (default '{}')".format(SEMI_TAG), "mikdim"],
+        ["-D", "--dry-run",                 "just print building info and exit"],
+        ["",   "--push",                    "push the images to the registry (registry login is not part of this command)", "mikdim"],
+        ["",   "--push-only",               "only push the images, don't build", "mikdim"],
+        ["-u", "--untag",                   "untag images after build (and push) is finished", "mikdim"],
+        ["",   "--prune",                   "prune the image and builder cache", "mikdim"],
+        ["-h", "--help",                    "show this help"]
     ])
 
 def parseOptions():
@@ -503,10 +513,15 @@ def detectVersion(projectVersion):
         return None
     return projectVersion
 
-def runIntegrationPlugins(options):
+def runIntegrationPlugins(options, detectEnabled):
     data = {}
     detectAll = ["version", "branch", "imagePrefix"]
-    detect = dict.fromkeys(detectAll, True)
+    detect = dict.fromkeys(detectAll, False)
+    detect.update(dict.fromkeys(detectEnabled, True))
+    detectAll = []
+    for (d, en) in detect.items():
+        if en:
+            detectAll.append(d)
     for plugin in options["integrationPlugins"]:
         plugin = getIntegrationPlugin(plugin)
         if plugin != None:
@@ -529,11 +544,14 @@ def runIntegrationPlugins(options):
             data = {}
 
     tags = []
-    if "version" in data and data["version"] != None and options["projectVersioning"]:
+    if "version" in data and data["version"] != None:
         version = detectVersion(data["version"])
         if version != None:
-            tags.append(version)
-    if "branch" in data and data["branch"] != None and options["projectBranchVersioning"]:
+            if "projectVersioning" in options and options["projectVersioning"]:
+                tags.append(version)
+            if "projectVersion" in options and options["projectVersion"] == None:
+                options["projectVersion"] = version
+    if "branch" in data and data["branch"] != None and "projectBranchVersioning" in options and options["projectBranchVersioning"]:
         branch = data["branch"]
         if options['allowedBranches'] == None or branch in options['allowedBranches']:
             tags.append(branch)
@@ -657,26 +675,25 @@ def createBuildScript(packageConfig, archiveFile, controlFile, tempDir):
 
 def createDebianControlFile(packageConfig, tempDir):
     filename = "control-" + str(packageConfig["buildId"])
+    description = packageConfig["description"] if "description" in packageConfig else packageConfig["name"]
+
     data = {
         "Package": packageConfig["name"],
-        "Version": packageConfig["version"],
+        "Version": packageConfig["projectVersion"],
         "Maintainer": "Mikenopa R&D <rd@mikenopa.com>",
         "Architecture": packageConfig["architecture"],
         "Depends": None,
         "Provides": None,
         "Conflicts": None,
-        "Description": packageConfig["name"],
-        "LongDescription": None
+        "Description": description
     }
 
     controlContent = ""
     for key in DEBIAN_CONTROL_FILE_KEYS:
         value = data[key] if key in data else None
         if value != None:
-            if key != "LongDescription":
-                controlContent+="{}: {}\n".format(key, value)
-            else:
-                controlContent+=" {}\n".format(value)
+            value = re.sub(r'\n', '\n ', value.strip())
+            controlContent+="{}: {}\n".format(key, value)
     putFile(tempDir, filename, controlContent)
     return filename
 
@@ -703,17 +720,19 @@ def processDebianPackage(packageConfig, options, tempDir):
     ret = True
     packageConfig = packageConfig.copy()
     packageConfig["preserveEnvironment"] = options["preserveEnvironment"]
-    packageConfig["buildImage"] = "debian:latest"
-    packageConfig["buildDir"] = "/tmp"
+    packageConfig["projectVersion"] = options["projectVersion"]
+    packageConfig["buildImage"] = options["buildImage"]
+    packageConfig["buildDir"] = options["buildImageMount"]
     packageConfig["outputDir"] = "."
     packageConfig["buildId"] = processDebianPackage.buildId
     packageConfig["packageSubdir"] = packageConfig["name"] + "-" + str(packageConfig["buildId"])
-    packageConfig["version"] = "1.0.0"
-    packageConfig["architecture"] = "all"
+    if not "architecture" in packageConfig:
+        packageConfig["architecture"] = "all"
+        print("Warning: Missing architecture flag in configuration, supposing architecture \"all\".")
     processDebianPackage.buildId += 1
     
     print("Building package {} version {} for architecture {}".format(
-        packageConfig["name"], packageConfig["version"], packageConfig["architecture"]
+        packageConfig["name"], packageConfig["projectVersion"], packageConfig["architecture"]
     ), file=sys.stderr)
     print("", file=sys.stderr)
 
@@ -739,16 +758,29 @@ def processDebianPackage(packageConfig, options, tempDir):
     return ret
 processDebianPackage.buildId = 1
 
+def mikdebOptionsChecker(options):
+    if not "projectVersion" in options or options["projectVersion"] == None:
+        print("Error: missing project version")
+        return False
+    if not re.search(SEMVER_REGEXP, options["projectVersion"]):
+        print("Error: Invalid project version: {}".format(options["projectVersion"]))
+        return False
+    return True
+
 APP_CONFIG = {
     "mikdim": {
         "processor": processImage,
         "configItemsKey": "images",
-        "errorMessage": lambda name: "Warning: image {} not defined in the mikdim config file, ignoring".format(name)
+        "errorMessage": lambda name: "Warning: image {} not defined in the mikdim config file, ignoring".format(name),
+        "integrationPlugins": ["version", "branch", "imagePrefix"],
+        "optionsChecker": None
     },
     "mikdeb": {
         "processor": processDebianPackage,
         "configItemsKey": "debian-packages",
-        "errorMessage": lambda name: "Warning: debian package {} not defined in the mikdeb config file, ignoring".format(name)
+        "errorMessage": lambda name: "Warning: debian package {} not defined in the mikdeb config file, ignoring".format(name),
+        "integrationPlugins": ["version"],
+        "optionsChecker": mikdebOptionsChecker
     }
 }
 
@@ -772,8 +804,11 @@ def run(options):
     
     processedObjects = {}
 
-    runIntegrationPlugins(options)
+    runIntegrationPlugins(options, appConfig["integrationPlugins"])
 
+    optionsChecker = appConfig["optionsChecker"]
+    if optionsChecker != None and not optionsChecker(options):
+        return 1
     ok = True
 
     with tempfile.TemporaryDirectory() as tempDir:
