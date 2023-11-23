@@ -118,6 +118,7 @@ SCHEMA = {
                 schema.Optional("architecture"): schema.Or(*DEBIAN_ARCHITECTURES),
                 schema.Optional("description"): str,
                 schema.Optional("long-description"): str,
+                schema.Optional("maintainer"): str,
                 schema.Optional(str): object
             }
         ]
@@ -254,6 +255,7 @@ OPTIONS_SPECIFIC = {
         "projectVersion": {"fn": optSetValue, "opts": ["V", "project-version"]},
         "buildImage": {"fn": optSetValue, "opts": ["i", "image"], "default": DEBIAN_BUILD_DOCKER_IMAGE},
         "buildImageMount": {"fn": optSetValue, "opts": ["i", "image"], "default": DEBIAN_BUILD_DOCKER_IMAGE_MOUNT},
+        "maintainer": {"fn": optSetValue, "opts": ["m", "maintainer"]},
     }
 }
 
@@ -296,6 +298,7 @@ def printHelp():
         ["-i", "--image <image-name>",      "build only this image (multiple images may be specified)", "mikdim"],
         ["-i", "--image <image-name>",      "build debian package using this docker image (default '{}')".format(DEBIAN_BUILD_DOCKER_IMAGE), "mikdeb"],
         ["-w", "--image-working-dir <dir>", "empty directory inside of the building image (default '{}')".format(DEBIAN_BUILD_DOCKER_IMAGE_MOUNT), "mikdeb"],
+        ["-m", "--maintainer <maintainer>", "set the default maintainer (will be used if package has no maintainer specified)", "mikdeb"],
         ["-P", "--package <package-name>",  "build only this package (multiple packages may be specified)", "mikdeb"],
         ["-s", "--semi-tag <tag>",          "specify the tag of the semiproduct (default '{}')".format(SEMI_TAG), "mikdim"],
         ["-D", "--dry-run",                 "just print building info and exit"],
@@ -680,7 +683,7 @@ def createDebianControlFile(packageConfig, tempDir):
     data = {
         "Package": packageConfig["name"],
         "Version": packageConfig["projectVersion"],
-        "Maintainer": "Mikenopa R&D <rd@mikenopa.com>",
+        "Maintainer": packageConfig["maintainer"],
         "Architecture": packageConfig["architecture"],
         "Depends": None,
         "Provides": None,
@@ -726,6 +729,7 @@ def processDebianPackage(packageConfig, options, tempDir):
     packageConfig["outputDir"] = "."
     packageConfig["buildId"] = processDebianPackage.buildId
     packageConfig["packageSubdir"] = packageConfig["name"] + "-" + str(packageConfig["buildId"])
+    packageConfig["maintainer"] = packageConfig["maintainer"] if "maintainer" in packageConfig else options["maintainer"]
     if not "architecture" in packageConfig:
         packageConfig["architecture"] = "all"
         print("Warning: Missing architecture flag in configuration, supposing architecture \"all\".")
