@@ -77,9 +77,24 @@ rm "$0"
 """
 
 DEBIAN_CONTROL_FILE_KEYS = [
-        "Package", "Version", "Maintainer", "Architecture", "Depends",
-        "Provides", "Conflicts", "Description"
+        "Package", "Version", "Maintainer", "Architecture", "Description"
 ]
+
+DEBIAN_DEP_FIELDS = {
+        "depends": "Depends",
+        "recommends": "Recommends",
+        "suggests": "Suggests",
+        "pre-depends": "Pre-Depends",
+        "conflicts": "Conflicts",
+        "enhaces": "Enhaces"
+}
+
+DEP_FIELDS_SCHEMA = {}
+
+for key, value in DEBIAN_DEP_FIELDS.items():
+    DEBIAN_CONTROL_FILE_KEYS.append(value)
+    DEP_FIELDS_SCHEMA[schema.Optional(key)] = schema.Or([str], str, None)
+
 
 SCHEMA = {
     "mikdim": {
@@ -119,7 +134,8 @@ SCHEMA = {
                 schema.Optional("description"): str,
                 schema.Optional("long-description"): str,
                 schema.Optional("maintainer"): str,
-                schema.Optional(str): object
+                schema.Optional(str): object,
+                **DEP_FIELDS_SCHEMA
             }
         ]
     }
@@ -676,6 +692,22 @@ def createBuildScript(packageConfig, archiveFile, controlFile, tempDir):
     )
     return buildScript
 
+def normalizeDepField(value):
+    if value == None:
+        return None
+    if isinstance(value, list):
+        value = ",".join(value)
+
+    value = value.replace('\n', ',')
+    values = []
+    for val in value.split(','):
+        val = val.strip()
+        if val != '':
+            values.append(val)
+    if not values:
+        return None
+    return ", ".join(values)
+
 def createDebianControlFile(packageConfig, tempDir):
     filename = "control-" + str(packageConfig["buildId"])
     description = packageConfig["description"] if "description" in packageConfig else packageConfig["name"]
@@ -685,11 +717,14 @@ def createDebianControlFile(packageConfig, tempDir):
         "Version": packageConfig["projectVersion"],
         "Maintainer": packageConfig["maintainer"],
         "Architecture": packageConfig["architecture"],
-        "Depends": None,
-        "Provides": None,
-        "Conflicts": None,
         "Description": description
     }
+
+    for key, dataKey in DEBIAN_DEP_FIELDS.items():
+        configVal = packageConfig[key] if key in packageConfig else None
+        configVal = normalizeDepField(configVal)
+        if configVal != None:
+            data[dataKey] = configVal
 
     controlContent = ""
     for key in DEBIAN_CONTROL_FILE_KEYS:
