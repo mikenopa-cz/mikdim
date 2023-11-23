@@ -18,6 +18,8 @@ DEV_TAG = "dev"
 ALLOWED_BRANCHES = ["production", "staging", "master", "main"]
 SEMVER_REGEXP = '^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+)?$'
 
+DEBIAN_BUILD_DOCKER_IMAGE = "debian:latest"
+
 DOCKERFILE_CONTENT = """# Dockerfile for building {finalImage} from {image} 
 FROM {image}
 
@@ -34,10 +36,30 @@ mkdir -p "$final_dir"
 cd "$final_dir"
 tar xzf "/tmp/archive.tar.gz"
 if [ -n "$postprocess_script" ]; then
+    export ROOT_DIR="/"
+    export PACKAGE_DIR="`pwd`"
     eval "$postprocess_script"
 fi
 rm -f "/tmp/archive.tar.gz"
 rm -f "/tmp/postprocess.sh"
+"""
+
+DPKG_DEB_CONTENT = """#!/bin/bash
+set -e
+base_dir={baseDir}
+package_subdir={packageSubdir}
+archive_file={archiveFile}
+postprocess_script={postprocessScript}
+final_dir={finalDir}
+mkdir -p "$base_dir/$package_subdir/DEBIAN"
+mkdir -p "$base_dir/$package_subdir/$final_dir"
+cd "$base_dir/$package_subdir/$final_dir"
+tar xzf "$base_dir/$archive_file"
+if [ -n "$postprocess_script" ]; then
+    export ROOT_DIR="$base_dir/$package_subdir"
+    export PACKAGE_DIR="`pwd`"
+    eval "$postprocess_script"
+fi
 """
 
 SCHEMA = {
@@ -334,7 +356,10 @@ def putFile(directory, file, template, *args, **kwargs):
         f.write(content)
 
 
-def createProjectArchive(tempDir, subdir, excludeDirs):
+def createProjectArchive(tempDir, objectConfig):
+    subdir = objectConfig['subdir'] if 'subdir' in objectConfig else '.'
+    excludeDirs = objectConfig['exclude'] if 'exclude' in objectConfig else []
+
     archive = "{}/archive-{}.tar.gz".format(os.path.realpath(tempDir), createProjectArchive.archiveNumber)
     createProjectArchive.archiveNumber += 1
     excludeArgs = []
@@ -352,16 +377,16 @@ def createProjectArchive(tempDir, subdir, excludeDirs):
 
 createProjectArchive.archiveNumber = 1
 
-def getEnvVars(imageConfig, devBuild):
+def getEnvVars(objectConfig, devBuild):
     envKey = 'environment-dev' if devBuild else 'environment'
     env = None
-    if not imageConfig['preserveEnvironment']:
+    if not objectConfig['preserveEnvironment']:
         env = {}
-    if not (envKey in imageConfig):
+    if not (envKey in objectConfig):
         return env
     if env == None:
         env = dict(os.environ)
-    for var, val in imageConfig[envKey].items():
+    for var, val in objectConfig[envKey].items():
         if val != None:
             env[var] = val
         elif var in env:
@@ -545,9 +570,6 @@ def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
     if devBuild:
         imageConfig['semiImages'] = imageConfig["finalImages"]
     
-    subdir = imageConfig['subdir'] if 'subdir' in imageConfig else '.'
-    exclude = imageConfig['exclude'] if 'exclude' in imageConfig else []
-    
     print("Building image {} as {}".format(imageConfig["finalImage"], "dev" if devBuild else "prod"), file=sys.stderr)
     if not devBuild:
         print("Semiproduct image: {}".format(imageConfig["semiImages"][0]), file=sys.stderr)
@@ -569,7 +591,7 @@ def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
         if not options["pushOnly"]:
             invokePrepareCommand(imageConfig, devBuild, envVars)
             if not devBuild:
-                archive = createProjectArchive(tempDir, subdir, exclude)
+                archive = createProjectArchive(tempDir, imageConfig)
             buildSemiProduct(imageConfig, tempDir, envVars)
             if not devBuild:
                 buildFinalProduct(imageConfig, tempDir, archive)
@@ -594,10 +616,58 @@ def processImage(imageConfig, options, tempDir):
             ok = False
     return ok
 
+def createBuildScript(packageConfig, archiveFile, tempDir):
+    buildId = createBuildScript.buildId
+    createBuildScript.buildId += 1
+    packageSubdir = packageConfig["name"] + "-" + str(buildId)
+    buildScript = "build-" + str(buildId) + ".sh"
+    postprocessScript = packageConfig["postprocess"] if "postprocess" in packageConfig else ""
+    finalDir = packageConfig["project-dir"] if "project-dir" in packageConfig else "/"
+    finalDir = finalDir.lstrip("/")
+    if finalDir == "":
+        finalDir = "."
+    putFile(
+        tempDir,
+        buildScript,
+        DPKG_DEB_CONTENT,
+        baseDir=shlex.quote(packageConfig["buildDir"]),
+        packageSubdir=shlex.quote(packageSubdir),
+        archiveFile=shlex.quote(archiveFile),
+        postprocessScript=shlex.quote(postprocessScript),
+        finalDir=shlex.quote(finalDir)
+    )
+    return buildScript
+createBuildScript.buildId = 1
+
+def buildDebianPackage(packageConfig, buildScript, tempDir):
+    fullBuildScript = packageConfig["buildDir"] + "/" + buildScript
+    volume = tempDir + ":" + packageConfig["buildDir"]
+    subprocess.run(["docker", "run", "-t", "-v", volume, "--user", "root", "--", packageConfig["buildImage"], "bash", fullBuildScript])
+    return ".deb"
+
 def processDebianPackage(packageConfig, options, tempDir):
     ret = True
+    packageConfig = packageConfig.copy()
+    packageConfig["preserveEnvironment"] = options["preserveEnvironment"]
+    packageConfig["buildImage"] = "debian:latest"
+    packageConfig["buildDir"] = "/tmp"
+    
     try:
-        pass
+        envVars = getEnvVars(packageConfig, False)
+        invokePrepareCommand(packageConfig, False, envVars)
+        archive = createProjectArchive(tempDir, packageConfig)
+        buildScript = createBuildScript(packageConfig, os.path.basename(archive), tempDir)
+        
+        debPackage = buildDebianPackage(packageConfig, buildScript, tempDir)
+
+        #FIXME: remove
+        print("debPackage: {}".format(debPackage))
+        cwd = os.getcwd()
+        os.chdir(tempDir)
+        subprocess.run(["bash"])
+        os.chdir(cwd)
+        volume = tempDir + ":" + packageConfig["buildDir"]
+        subprocess.run(["docker", "run", "-t", "-v", volume, "--user", "root", "--", packageConfig["buildImage"], "bash", "-c", "rm -rf /tmp/*"])
         raise Exception("processing debian package not implemented")
     except Exception as e:
         print("Error: building debian package {} failed: {}".format(packageConfig["name"], e), file=sys.stderr)
