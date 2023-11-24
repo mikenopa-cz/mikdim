@@ -54,6 +54,7 @@ postprocess_script={postprocessScript}
 control_file={controlFile}
 final_dir={finalDir}
 package_name={packageName}
+conffiles_regexp={conffilesRegexp}
 rm -rf "$base_dir/*.deb"
 mkdir -p "$base_dir/$package_subdir/DEBIAN"
 mv "$base_dir/$control_file" "$base_dir/$package_subdir/DEBIAN/control"
@@ -66,6 +67,10 @@ if [ -n "$postprocess_script" ]; then
     export ROOT_DIR="$base_dir/$package_subdir"
     export PACKAGE_DIR="`pwd`"
     eval "$postprocess_script"
+fi
+cd "$base_dir/$package_subdir"
+if [ -n "$conffiles_regexp" ]; then
+    find . -type f | sed 's|^./|/|' | grep -E "$conffiles_regexp" > DEBIAN/conffiles || rm DEBIAN/conffiles
 fi
 cd "$base_dir"
 dpkg-deb -b "$package_subdir" .
@@ -134,6 +139,8 @@ SCHEMA = {
                 schema.Optional("description"): str,
                 schema.Optional("long-description"): str,
                 schema.Optional("maintainer"): str,
+                schema.Optional("config-files"): schema.Or(str, [str], None),
+                schema.Optional("etc-config-files"): bool,
                 schema.Optional(str): object,
                 **DEP_FIELDS_SCHEMA
             }
@@ -671,11 +678,98 @@ def processImage(imageConfig, options, tempDir):
             ok = False
     return ok
 
+class Wildcards:
+    def __init__(self, patterns):
+        self.patterns = map(lambda x: Wildcard(x), patterns)
+    def getEgrepRegexp(self, slashFix = True):
+        slash = ''
+        if slashFix:
+            slash = '/?'
+        return "^"+slash+"(" + "|".join(map(lambda x: x.getEgrepRegexp(), self.patterns)) + ")$"
+
+class Wildcard:
+    def __init__(self, pattern):
+        self.parts = []
+        for x in re.split(r'(\\.)', pattern):
+            if x == '':
+                continue
+            if x[:1] == "\\":
+                if len(x) < 2:
+                    self.putConstant(x)
+                elif len(x) > 2:
+                    raise Exception("Bug")
+                elif x[1:2] in ['*', '?', '\\']:
+                    self.putConstant(x[1:2])
+                else:
+                    self.putConstant(x)
+            else:
+                self.processPart(x)
+
+    def processPart(self, part):
+        for x in re.split(r'(\?|\*\*?)', part):
+            if x == '':
+                continue
+            if x in ['*', '**', '?']:
+                self.putWildcard(x)
+            else:
+                self.putConstant(x)
+
+    def putConstant(self, constant):
+        last = self.parts[-1] if len(self.parts) > 0 else None
+        if last != None and last[0] == 'const':
+            last[1] += constant
+        else:
+            self.parts.append(["const", constant])
+
+    def putWildcard(self, wildcard):
+        last = self.parts[-1] if len(self.parts) > 0 else None
+        if last != None and last[0] == 'wildcard' and wildcard in ['*', '**'] and last[1] in ['*', '**']:
+            if wildcard == '**':
+                last[1] = '**'
+        else:
+            self.parts.append(["wildcard", wildcard])
+
+    def getEgrepRegexp(self):
+        regexp = ''
+        for x in self.parts:
+            if x[0] == 'wildcard':
+                if x[1] == '*':
+                    regexp += '[^/]*'
+                elif x[1] == '**':
+                    regexp += '.*'
+                elif x[1] == '?':
+                    regexp += '[^/]'
+                else:
+                    raise Exception("Bug")
+            elif x[0] == 'const':
+                regexp += re.sub(r'([\(\)\*\+\.\?\[\]\\\$\^\{\|\}])', r'\\\1', x[1])
+            else:
+                raise Exception("Bug")
+        return regexp
+
+def getConfigFilesRegexp(packageConfig):
+    conffilesWildcards = packageConfig['config-files'] if 'config-files' in packageConfig else None
+    if conffilesWildcards == None:
+        conffilesWildcards = []
+    elif isinstance(conffilesWildcards, str):
+        conffilesWildcards = [conffilesWildcards]
+    else:
+        conffilesWildcards = conffilesWildcards.copy()
+    if not 'etc-config-files' in packageConfig or packageConfig['etc-config-files']:
+        conffilesWildcards.append('/etc/**')
+    if conffilesWildcards:
+        conffilesRegexp = Wildcards(conffilesWildcards).getEgrepRegexp()
+    else:
+        conffilesRegexp = ''
+    return conffilesRegexp
+
+
 def createBuildScript(packageConfig, archiveFile, controlFile, tempDir):
     buildScript = "build-" + str(packageConfig["buildId"]) + ".sh"
     postprocessScript = packageConfig["postprocess"] if "postprocess" in packageConfig else ""
     finalDir = packageConfig["project-dir"] if "project-dir" in packageConfig else "/"
     finalDir = finalDir.lstrip("/")
+    conffilesRegexp = getConfigFilesRegexp(packageConfig)
     if finalDir == "":
         finalDir = "."
     putFile(
@@ -688,6 +782,7 @@ def createBuildScript(packageConfig, archiveFile, controlFile, tempDir):
         postprocessScript=shlex.quote(postprocessScript),
         controlFile=shlex.quote(controlFile),
         packageName=shlex.quote(packageConfig["name"]),
+        conffilesRegexp=shlex.quote(conffilesRegexp),
         finalDir=shlex.quote(finalDir)
     )
     return buildScript

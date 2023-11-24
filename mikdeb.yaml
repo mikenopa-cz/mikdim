@@ -2,16 +2,18 @@ debian-packages:
     - name: mikdim
       project-dir: "/opt/mikenopa/mikdim"
       postprocess: |
-        mkdir -p "$ROOT_DIR/usr/bin"
-        cp mikdim "$ROOT_DIR/usr/bin"
-        ln -s mikdim "$ROOT_DIR/usr/bin/mikdeb"
-        rm -rf "$ROOT_DIR/opt"
+        cd "$ROOT_DIR"
+        mkdir -p "usr/bin"
+        cp opt/mikenopa/mikdim/mikdim "usr/bin"
+        ln -s mikdim "usr/bin/mikdeb"
+        rm -rf "opt"
       architecture: all
       maintainer: 'Mikenopa R&D department <rd@mikenopa.com>'
       depends:
         - python3
         - python3-yaml
         - python3-schema
+        - docker.io
       description: |
         The mikenopa mikdim tool. It consists of two binaries:
         - mikdim - for building docker images

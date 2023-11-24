@@ -1,0 +1,25 @@
+debian-packages:
+    - name: mikdeb-test-package
+      project-dir: "/var/www/html"
+      postprocess: "mkdir -p \"$ROOT_DIR/etc\"; echo \"cfg\" > \"$ROOT_DIR/etc/cfg.cfg\""
+#      prepare-command: "some/command args"
+      subdir: "."
+      exclude: ["docker"]
+      architecture: all
+      maintainer: 'Mikenopa R&D department <rd@mikenopa.com>'
+      depends: null
+      recommends: null
+      suggests: null
+      pre-depends: null
+      conflicts: null
+      enhaces: null
+      config-files:
+        - /opt/package/etc/**
+      etc-config-files: false
+      description: |
+        mikdeb test package
+        multiple line description
+        Someting: X
+      environment:
+        BUILD_ENV: production
+        LANG: null
