@@ -1,12 +1,11 @@
 #!/usr/bin/python3
 
-import sys, getopt, os, subprocess, re, yaml, schema, tempfile, shutil, shlex, glob
+import sys, getopt, os, subprocess, re, yaml, schema, tempfile, shutil, shlex, glob, stat
 from pprint import pprint
 
 commandName = os.path.basename(sys.argv[0])
 
 if commandName == 'mikdeb':
-    print("Warning: mikdeb is not yet fully implemented!", file=sys.stderr)
     CMD = 'mikdeb'
     DEFAULT_CONFIG = "mikdeb.yaml"
 else:
@@ -15,6 +14,7 @@ else:
 
 SEMI_TAG = "semi-tmp"
 DEV_TAG = "dev"
+DEBIAN_PACKAGE_SCRIPTS = ["preinst", "postinst", "prerm", "postrm"]
 DEBIAN_ARCHITECTURES = ["all", "arm64", "amd64", "armel", "armhf", "i386", "mips64el", "ppc64el", "riscv64", "s390x"]
 ALLOWED_BRANCHES = ["production", "staging", "master", "main"]
 SEMVER_REGEXP = '^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+)?$'
@@ -51,13 +51,10 @@ base_dir={baseDir}
 package_subdir={packageSubdir}
 archive_file={archiveFile}
 postprocess_script={postprocessScript}
-control_file={controlFile}
 final_dir={finalDir}
 package_name={packageName}
 conffiles_regexp={conffilesRegexp}
 rm -rf "$base_dir/*.deb"
-mkdir -p "$base_dir/$package_subdir/DEBIAN"
-mv "$base_dir/$control_file" "$base_dir/$package_subdir/DEBIAN/control"
 mkdir -p "$base_dir/$package_subdir/$final_dir"
 cd "$base_dir/$package_subdir/$final_dir"
 tar xzf "$base_dir/$archive_file"
@@ -70,7 +67,7 @@ if [ -n "$postprocess_script" ]; then
 fi
 cd "$base_dir/$package_subdir"
 if [ -n "$conffiles_regexp" ]; then
-    find . -type f | sed 's|^./|/|' | grep -E "$conffiles_regexp" > DEBIAN/conffiles || rm DEBIAN/conffiles
+    find . -type f | sed 's|^./|/|;/^\/DEBIAN\(\/\|$\)/d' | grep -E "$conffiles_regexp" > DEBIAN/conffiles || rm DEBIAN/conffiles
 fi
 cd "$base_dir"
 dpkg-deb -b "$package_subdir" .
@@ -141,6 +138,7 @@ SCHEMA = {
                 schema.Optional("maintainer"): str,
                 schema.Optional("config-files"): schema.Or(str, [str], None),
                 schema.Optional("etc-config-files"): bool,
+                schema.Optional("scripts"): schema.Or(str, {schema.Optional(str): str}),
                 schema.Optional(str): object,
                 **DEP_FIELDS_SCHEMA
             }
@@ -410,13 +408,13 @@ def putFile(directory, file, template, *args, **kwargs):
         f.write(content)
 
 
-def createProjectArchive(tempDir, objectConfig):
+def createProjectArchive(tempDir, objectConfig, additionalExclude = []):
     subdir = objectConfig['subdir'] if 'subdir' in objectConfig else '.'
     excludeDirs = objectConfig['exclude'] if 'exclude' in objectConfig else []
 
     archive = "{}/archive-{}.tar.gz".format(os.path.realpath(tempDir), createProjectArchive.archiveNumber)
     createProjectArchive.archiveNumber += 1
-    excludeArgs = []
+    excludeArgs = additionalExclude.copy()
     if not os.path.isdir(subdir):
         raise Exception("Image sbdir is not a directory")
     for excludeDir in excludeDirs:
@@ -764,7 +762,7 @@ def getConfigFilesRegexp(packageConfig):
     return conffilesRegexp
 
 
-def createBuildScript(packageConfig, archiveFile, controlFile, tempDir):
+def createBuildScript(packageConfig, archiveFile, tempDir):
     buildScript = "build-" + str(packageConfig["buildId"]) + ".sh"
     postprocessScript = packageConfig["postprocess"] if "postprocess" in packageConfig else ""
     finalDir = packageConfig["project-dir"] if "project-dir" in packageConfig else "/"
@@ -780,7 +778,6 @@ def createBuildScript(packageConfig, archiveFile, controlFile, tempDir):
         packageSubdir=shlex.quote(packageConfig["packageSubdir"]),
         archiveFile=shlex.quote(archiveFile),
         postprocessScript=shlex.quote(postprocessScript),
-        controlFile=shlex.quote(controlFile),
         packageName=shlex.quote(packageConfig["name"]),
         conffilesRegexp=shlex.quote(conffilesRegexp),
         finalDir=shlex.quote(finalDir)
@@ -804,7 +801,7 @@ def normalizeDepField(value):
     return ", ".join(values)
 
 def createDebianControlFile(packageConfig, tempDir):
-    filename = "control-" + str(packageConfig["buildId"])
+    debianDir = tempDir + "/" + packageConfig["debianDir"]
     description = packageConfig["description"] if "description" in packageConfig else packageConfig["name"]
 
     data = {
@@ -827,9 +824,42 @@ def createDebianControlFile(packageConfig, tempDir):
         if value != None:
             value = re.sub(r'\n', '\n ', value.strip())
             controlContent+="{}: {}\n".format(key, value)
-    putFile(tempDir, filename, controlContent)
-    return filename
+    putFile(debianDir, "control", controlContent)
 
+def installMaintainerScripts(packageConfig, tempDir):
+    scripts = packageConfig["scripts"] if "scripts" in packageConfig else None
+    if scripts == None or scripts == '':
+        return []
+    scriptsDir = None
+    if isinstance(scripts, str):
+        if not os.path.isdir(scripts):
+            return []
+        scriptsDir = scripts
+        scripts = {}
+        for script in DEBIAN_PACKAGE_SCRIPTS:
+            scriptPath = scriptsDir + "/" + script
+            if os.path.isfile(scriptPath):
+                scripts[script] = scriptPath
+    else:
+        for script in scripts.keys():
+            if not script in DEBIAN_PACKAGE_SCRIPTS:
+                raise Exception("Invalid script: {}".format(script))
+            if not os.path.isfile(scripts[script]):
+                raise Exception("{} script does not exist: {}".format(script, scripts[script]))
+    if scriptsDir == '.':
+        scriptsDir = None
+    exclude = []
+    if scriptsDir != None:
+        exclude.append(scriptsDir)
+    debianDir = tempDir + "/" + packageConfig["debianDir"]
+    for script, scriptPath in scripts.items():
+        if scriptsDir == None and scriptPath[0:1] != '/':
+            exclude.append(scriptPath)
+        dst = debianDir + "/" + script
+        shutil.copy(scriptPath, dst)
+        os.chmod(dst, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+
+    return exclude 
 
 def buildDebianPackage(packageConfig, buildScript, tempDir):
     fullBuildScript = packageConfig["buildDir"] + "/" + buildScript
@@ -849,6 +879,10 @@ def cleanupDebianBuild(packageConfig, tempDir, success):
         volume = tempDir + ":" + packageConfig["buildDir"]
         subprocess.run(["docker", "run", "-t", "-v", volume, "--user", "root", "--", packageConfig["buildImage"], "bash", "-c", "rm -rf /tmp/*"])
 
+def createBasicPackageStruct(packageConfig, tempDir):
+    debianDir = tempDir + "/" + packageConfig["debianDir"]
+    os.makedirs(debianDir)
+
 def processDebianPackage(packageConfig, options, tempDir):
     ret = True
     packageConfig = packageConfig.copy()
@@ -860,6 +894,8 @@ def processDebianPackage(packageConfig, options, tempDir):
     packageConfig["buildId"] = processDebianPackage.buildId
     packageConfig["packageSubdir"] = packageConfig["name"] + "-" + str(packageConfig["buildId"])
     packageConfig["maintainer"] = packageConfig["maintainer"] if "maintainer" in packageConfig else options["maintainer"]
+    packageConfig["debianDir"] = packageConfig["packageSubdir"] + "/DEBIAN"
+
     if not "architecture" in packageConfig:
         packageConfig["architecture"] = "all"
         print("Warning: Missing architecture flag in configuration, supposing architecture \"all\".")
@@ -878,9 +914,11 @@ def processDebianPackage(packageConfig, options, tempDir):
             raise Exception("Output directory does not exist")
         envVars = getEnvVars(packageConfig, False)
         invokePrepareCommand(packageConfig, False, envVars)
-        archive = createProjectArchive(tempDir, packageConfig)
-        controlFile = createDebianControlFile(packageConfig, tempDir)
-        buildScript = createBuildScript(packageConfig, os.path.basename(archive), controlFile, tempDir)
+        createBasicPackageStruct(packageConfig, tempDir)
+        createDebianControlFile(packageConfig, tempDir)
+        exclude = installMaintainerScripts(packageConfig, tempDir)
+        archive = createProjectArchive(tempDir, packageConfig, additionalExclude=exclude)
+        buildScript = createBuildScript(packageConfig, os.path.basename(archive), tempDir)
         
         debPackage = buildDebianPackage(packageConfig, buildScript, tempDir)
 
@@ -966,4 +1004,3 @@ if options["help"]:
     exit(1)
 
 exit(run(options))
-

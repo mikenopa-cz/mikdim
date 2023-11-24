@@ -20,6 +20,9 @@ debian-packages:
         mikdeb test package
         multiple line description
         Someting: X
+      scripts: "debian"
+#      scripts:
+#        prerm: debian/prerm
       environment:
         BUILD_ENV: production
         LANG: null
