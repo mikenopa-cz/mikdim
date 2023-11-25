@@ -1,28 +1,29 @@
 debian-packages:
-    - name: mikdeb-test-package
-      project-dir: "/var/www/html"
-      postprocess: "mkdir -p \"$ROOT_DIR/etc\"; echo \"cfg\" > \"$ROOT_DIR/etc/cfg.cfg\""
-#      prepare-command: "some/command args"
-      subdir: "."
-      exclude: ["docker"]
-      architecture: all
-      maintainer: 'Mikenopa R&D department <rd@mikenopa.com>'
-      depends: null
-      recommends: null
-      suggests: null
-      pre-depends: null
-      conflicts: null
-      enhaces: null
-      config-files:
-        - /opt/package/etc/**
-      etc-config-files: false
-      description: |
-        mikdeb test package
-        multiple line description
-        Someting: X
-      scripts: "debian"
-#      scripts:
-#        prerm: debian/prerm
-      environment:
-        BUILD_ENV: production
-        LANG: null
+    - name: mikdeb-test-package                    # name of the package (REQUIRED)
+      project-dir: "/var/www/html"                 # location of where the codebase should be located in the debian package
+      postprocess:                                 # file structure postprocessing scripts. Important: package is not built in root directory, therefore
+        - mkdir -p "$ROOT_DIR/etc"                 #  root directory of the package is represented by the env variable $ROOT_DIR. The current directory
+        - echo "cfg" > "$ROOT_DIR/etc/cfg.cfg"     #  represents the directory where the codebase was put
+      prepare-command: "some/command args"         # command being invoked before building. Useful for setting up all dependencies
+      subdir: "."                                  # subdirectory of the codebase being put to project-dir
+      exclude: ["docker"]                          # exclude these files/dirs from codebase (these files/dirs will NOT be put to project-dir)
+      architecture: all                            # package architecture (REQUIRED)
+      maintainer: 'Mikenopa R&D <rd@mikenopa.com>' # the package maintainer (may be also set by --maintainer option) (STRONGLY RECOMMENDED)
+      depends: null                                # depends field (all package relations may be strings or array of strings)
+      recommends: null                             # recommends
+      suggests: null                               # suggensts
+      pre-depends: null                            # pre-depends
+      conflicts: null                              # conflicts
+      enhaces: null                                # enhaces
+      config-files:                                # list of config files of the package (config files may be wildcarded by '*', '**', '?')
+        - /opt/package/etc/**                      #
+      etc-config-files: false                      # Put to false if you want to disable the default wildcard /etc/**
+      description: |                               # Package description
+        mikdeb test package                        #
+        multiple line description                  #
+      scripts: "debian"                            # directory containing the prerm/postrm/preinst/postinst scripts
+#      scripts:                                    # alternatively prerm/postrm/preinst/postinst scripts may be referenced directly
+#        prerm: debian/prerm                       #
+      environment:                                 # environment variables being set (currently only for the prepare-command)
+        BUILD_ENV: production                      # set BUILD_ENV=production
+        LANG: null                                 # unset LANG
