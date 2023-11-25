@@ -28,10 +28,8 @@ ARGV0 = detectArgv0()
 
 if detectCommandName(ARGV0) == 'mikdeb':
     CMD = 'mikdeb'
-    DEFAULT_CONFIG = "mikdeb.yaml"
 else:
     CMD = 'mikdim'
-    DEFAULT_CONFIG = "mikdim.yaml"
 
 SEMI_TAG = "semi-tmp"
 DEV_TAG = "dev"
