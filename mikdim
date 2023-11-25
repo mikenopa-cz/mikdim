@@ -128,7 +128,7 @@ SCHEMA = {
                 schema.Optional("prepare-command"): schema.Or(str, [str]),
                 schema.Optional("prepare-command-dev"): schema.Or(str, [str]),
                 schema.Optional("project-dir"): str,
-                schema.Optional("postprocess"): str,
+                schema.Optional("postprocess"): schema.Or(str, [str]),
                 schema.Optional("environment"): {
                     schema.Optional(str): schema.Or(str, None)
                 },
@@ -147,7 +147,7 @@ SCHEMA = {
                 "name": str,
                 schema.Optional("prepare-command"): schema.Or(str, [str]),
                 schema.Optional("project-dir"): str,
-                schema.Optional("postprocess"): str,
+                schema.Optional("postprocess"): schema.Or(str, [str]),
                 schema.Optional("environment"): {
                     schema.Optional(str): schema.Or(str, None)
                 },
@@ -475,11 +475,16 @@ def buildSemiProduct(imageConfig, tempDir, envVars):
     if subprocess.run(["docker", "build", "--pull"] + imageArgs + [imageConfig['build']], env=envVars).returncode != 0:
         raise Exception("Cannot build semiproduct image")
 
+def buildCommand(commandDefinition):
+    if not isinstance(commandDefinition, str):
+        commandDefinition = "\n".join(commandDefinition)
+    return commandDefinition
+
 def buildFinalProduct(imageConfig, tempDir, projectArchive):
     dockerDir = "{}/docker-{}".format(tempDir, imageConfig['name'])
     os.mkdir(dockerDir)
     finalDir = imageConfig["project-dir"] if "project-dir" in imageConfig else "/workspace"
-    postprocessScript = imageConfig["postprocess"] if "postprocess" in imageConfig else ""
+    postprocessScript = buildCommand(imageConfig["postprocess"] if "postprocess" in imageConfig else "")
     putFile(dockerDir, "Dockerfile", DOCKERFILE_CONTENT, image=imageConfig["semiImages"][0], finalImage=imageConfig["finalImage"])
     putFile(dockerDir, "postprocess.sh", POSTPROCESS_CONTENT, finalDir=shlex.quote(finalDir), postprocessScript=shlex.quote(postprocessScript))
     shutil.copy(projectArchive, "{}/archive.tar.gz".format(dockerDir))
@@ -609,12 +614,13 @@ def invokePrepareCommand(objectConfig, devBuild, envVars):
         prepareCommandKey = 'prepare-command'
 
     prepareCommand = objectConfig[prepareCommandKey] if 'prepare-command' in objectConfig else None
-
-    if isinstance(prepareCommand, str):
-        prepareCommand = ["bash", "-c", prepareCommand]
-
+    
     if prepareCommand == None:
         return
+
+    prepareCommand = buildCommand(prepareCommand)
+    prepareCommand = ["bash", "-c", prepareCommand]
+
     if not prepareCommand:
         raise Exception("Cannot invoke empty prepare command")
     if subprocess.run(prepareCommand, env=envVars).returncode != 0:
@@ -782,7 +788,7 @@ def getConfigFilesRegexp(packageConfig):
 
 def createBuildScript(packageConfig, archiveFile, tempDir):
     buildScript = "build-" + str(packageConfig["buildId"]) + ".sh"
-    postprocessScript = packageConfig["postprocess"] if "postprocess" in packageConfig else ""
+    postprocessScript = buildCommand(packageConfig["postprocess"] if "postprocess" in packageConfig else "")
     finalDir = packageConfig["project-dir"] if "project-dir" in packageConfig else "/"
     finalDir = finalDir.lstrip("/")
     conffilesRegexp = getConfigFilesRegexp(packageConfig)

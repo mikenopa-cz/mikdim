@@ -1,12 +1,12 @@
 debian-packages:
     - name: mikdim
       project-dir: "/opt/mikenopa/mikdim"
-      postprocess: |
-        cd "$ROOT_DIR"
-        mkdir -p "usr/bin"
-        cp opt/mikenopa/mikdim/mikdim "usr/bin"
-        ln -s mikdim "usr/bin/mikdeb"
-        rm -rf "opt"
+      postprocess:
+        - cd "$ROOT_DIR"
+        - mkdir -p "usr/bin"
+        - cp opt/mikenopa/mikdim/mikdim "usr/bin"
+        - ln -s mikdim "usr/bin/mikdeb"
+        - rm -rf "opt"
       architecture: all
       maintainer: 'Mikenopa R&D department <rd@mikenopa.com>'
       depends:
