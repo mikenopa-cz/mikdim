@@ -3,9 +3,30 @@
 import sys, getopt, os, subprocess, re, yaml, schema, tempfile, shutil, shlex, glob, stat
 from pprint import pprint
 
-commandName = os.path.basename(sys.argv[0])
+def getenv(key, default=None):
+    return os.environ[key] if key in os.environ else default
 
-if commandName == 'mikdeb':
+def detectArgv0():
+    argv0 = sys.argv[0]
+    commandDir = os.path.dirname(argv0)
+    commandName = os.path.basename(argv0)
+    if commandDir[0:1] == '/':
+        for path in getenv("PATH", "").split(":"):
+            if path == '':
+                continue
+            if commandDir == path:
+                return commandName
+            testCommand = path + "/" + commandName
+            if os.path.isfile(testCommand) and os.access(testCommand, os.X_OK) and not os.path.samefile(argv0, testCommand):
+                return argv0
+    return argv0
+def detectCommandName(argv0):
+    argv0 = os.path.basename(argv0)
+    return re.sub(r'\.[^\.]+$', '', argv0)
+
+ARGV0 = detectArgv0()
+
+if detectCommandName(ARGV0) == 'mikdeb':
     CMD = 'mikdeb'
     DEFAULT_CONFIG = "mikdeb.yaml"
 else:
@@ -171,9 +192,6 @@ def integrationPluginGit(options, detect):
             data["branch"] = projectBranch
     return data
 
-def getenv(key):
-    return os.environ[key] if key in os.environ else None
-
 def integrationPluginGitlab(options, detect):
     data = {}
     if detect["imagePrefix"]:
@@ -298,7 +316,7 @@ def helpPrint(options):
         print("  {}{} {}{}  - {}".format(short, " " * shortLen, long, " " * longLen, description), file=sys.stderr)
 
 def printHelp():
-    print("usage: {} [options]".format(sys.argv[0]), file=sys.stderr)
+    print("usage: {} [options]".format(ARGV0), file=sys.stderr)
     print("options:", file=sys.stderr)
     helpPrint([
         ["-d", "--dev",                     "invoke dev build of the images", "mikdim"],
