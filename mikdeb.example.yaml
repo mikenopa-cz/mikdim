@@ -1,3 +1,4 @@
+output-dir: "out"                                  # directory to be used for output debian packages
 debian-packages:
     - name: mikdeb-test-package                    # name of the package (REQUIRED)
       project-dir: "/var/www/html"                 # location of where the codebase should be located in the debian package
@@ -16,14 +17,14 @@ debian-packages:
       conflicts: null                              # conflicts
       enhaces: null                                # enhaces
       config-files:                                # list of config files of the package (config files may be wildcarded by '*', '**', '?')
-        - /opt/package/etc/**                      #
+        - /opt/package/etc/**
       etc-config-files: false                      # Put to false if you want to disable the default wildcard /etc/**
       description: |                               # Package description
-        mikdeb test package                        #
-        multiple line description                  #
+        mikdeb test package
+        multiple line description
       scripts: "debian"                            # directory containing the prerm/postrm/preinst/postinst scripts
 #      scripts:                                    # alternatively prerm/postrm/preinst/postinst scripts may be referenced directly
-#        prerm: debian/prerm                       #
+#        prerm: debian/prerm
       environment:                                 # environment variables being set (currently only for the prepare-command)
         BUILD_ENV: production                      # set BUILD_ENV=production
         LANG: null                                 # unset LANG

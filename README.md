@@ -27,7 +27,7 @@ If you want to make a regular installation using a deb file, you may build it us
 1. install the dependencies mentioned above
 2. clone the mikdim repository to your local computer
 3. run `./mikdeb --git` in the root of the repository
-4. install the created debian package by `apt install ./mikdim_*.deb`
+4. install the created debian package by `apt install out/mikdim_*.deb`
 5. mikdim and mikdeb are now system-wide commands
 
 

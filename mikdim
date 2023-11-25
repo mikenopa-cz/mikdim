@@ -142,6 +142,7 @@ SCHEMA = {
         ]
     },
     "mikdeb": {
+        schema.Optional("output-dir"): schema.Or(str, None),
         "debian-packages": [
             {
                 "name": str,
@@ -295,6 +296,7 @@ OPTIONS_SPECIFIC = {
         "buildImage": {"fn": optSetValue, "opts": ["i", "image"], "default": DEBIAN_BUILD_DOCKER_IMAGE},
         "buildImageMount": {"fn": optSetValue, "opts": ["i", "image"], "default": DEBIAN_BUILD_DOCKER_IMAGE_MOUNT},
         "maintainer": {"fn": optSetValue, "opts": ["m", "maintainer"]},
+        "outputDir": {"fn": optSetValue, "opts": ["o", "output-dir"], "relativePath": True},
     }
 }
 
@@ -340,6 +342,7 @@ def printHelp():
         ["-m", "--maintainer <maintainer>", "set the default maintainer (will be used if package has no maintainer specified)", "mikdeb"],
         ["-P", "--package <package-name>",  "build only this package (multiple packages may be specified)", "mikdeb"],
         ["-s", "--semi-tag <tag>",          "specify the tag of the semiproduct (default '{}')".format(SEMI_TAG), "mikdim"],
+        ["-o", "--output-dir <dir>",        "set the output directory where built packages should be stored", "mikdeb"],
         ["-D", "--dry-run",                 "just print building info and exit"],
         ["",   "--push",                    "push the images to the registry (registry login is not part of this command)", "mikdim"],
         ["",   "--push-only",               "only push the images, don't build", "mikdim"],
@@ -347,6 +350,11 @@ def printHelp():
         ["",   "--prune",                   "prune the image and builder cache", "mikdim"],
         ["-h", "--help",                    "show this help"]
     ])
+
+def pathToAbsolute(path):
+    if path == '' or path[0:1] == '/':
+        return path
+    return os.getcwd() + "/" + path
 
 def parseOptions():
     optionsDef = {}
@@ -385,15 +393,19 @@ def parseOptions():
             if myKey == "_self" or myKey == None:
                 myKey = key
             options[myKey] = myValue
+        if "relativePath" in optDef and optDef["relativePath"]:
+            if options[key] != None:
+                options[key] = pathToAbsolute(options[key])
+            
 
     return options 
 
-def enterProject(project):
+def enterProject(project, defaultConfig):
     if project == None:
         project = "."
     if os.path.isdir(project):
         os.chdir(project)
-        file = DEFAULT_CONFIG
+        file = defaultConfig
     elif os.path.isfile(project):
         os.chdir(os.path.dirname(project))
         file = os.path.basename(project)
@@ -909,12 +921,16 @@ def createBasicPackageStruct(packageConfig, tempDir):
 
 def processDebianPackage(packageConfig, options, tempDir):
     ret = True
+    if options["outputDir"] != None:
+        outputDir = options["outputDir"]
+    else:
+        outputDir = "."
     packageConfig = packageConfig.copy()
     packageConfig["preserveEnvironment"] = options["preserveEnvironment"]
     packageConfig["projectVersion"] = options["projectVersion"]
     packageConfig["buildImage"] = options["buildImage"]
     packageConfig["buildDir"] = options["buildImageMount"]
-    packageConfig["outputDir"] = "."
+    packageConfig["outputDir"] = outputDir
     packageConfig["buildId"] = processDebianPackage.buildId
     packageConfig["packageSubdir"] = packageConfig["name"] + "-" + str(packageConfig["buildId"])
     packageConfig["maintainer"] = packageConfig["maintainer"] if "maintainer" in packageConfig else options["maintainer"]
@@ -934,8 +950,6 @@ def processDebianPackage(packageConfig, options, tempDir):
         return True
 
     try:
-        if not os.path.isdir(packageConfig["outputDir"]):
-            raise Exception("Output directory does not exist")
         envVars = getEnvVars(packageConfig, False)
         invokePrepareCommand(packageConfig, False, envVars)
         createBasicPackageStruct(packageConfig, tempDir)
@@ -946,6 +960,8 @@ def processDebianPackage(packageConfig, options, tempDir):
         
         debPackage = buildDebianPackage(packageConfig, buildScript, tempDir)
 
+        if not os.path.isdir(packageConfig["outputDir"]):
+            os.mkdir(packageConfig["outputDir"])
         os.rename(debPackage, packageConfig["outputDir"] + "/" + os.path.basename(debPackage))
     except Exception as e:
         print("Error: building debian package {} failed: {}".format(packageConfig["name"], e), file=sys.stderr)
@@ -954,13 +970,15 @@ def processDebianPackage(packageConfig, options, tempDir):
     return ret
 processDebianPackage.buildId = 1
 
-def mikdebOptionsChecker(options):
+def mikdebOptionsChecker(options, config):
     if not "projectVersion" in options or options["projectVersion"] == None:
         print("Error: missing project version")
         return False
     if not re.search(SEMVER_REGEXP, options["projectVersion"]):
         print("Error: Invalid project version: {}".format(options["projectVersion"]))
         return False
+    if "output-dir" in config and config["output-dir"] != None and options["outputDir"] == None:
+        options["outputDir"] = config["output-dir"]
     return True
 
 APP_CONFIG = {
@@ -969,20 +987,22 @@ APP_CONFIG = {
         "configItemsKey": "images",
         "errorMessage": lambda name: "Warning: image {} not defined in the mikdim config file, ignoring".format(name),
         "integrationPlugins": ["version", "branch", "imagePrefix"],
-        "optionsChecker": None
+        "optionsChecker": None,
+        "defaultConfig": "mikdim.yaml"
     },
     "mikdeb": {
         "processor": processDebianPackage,
         "configItemsKey": "debian-packages",
         "errorMessage": lambda name: "Warning: debian package {} not defined in the mikdeb config file, ignoring".format(name),
         "integrationPlugins": ["version"],
-        "optionsChecker": mikdebOptionsChecker
+        "optionsChecker": mikdebOptionsChecker,
+        "defaultConfig": "mikdeb.yaml"
     }
 }
 
 def run(options):
     appConfig = APP_CONFIG[CMD]
-    file = enterProject(options["project"])
+    file = enterProject(options["project"], appConfig["defaultConfig"])
     if file == None:
         print("Error: config file not found", file=sys.stderr)
         return 1
@@ -1003,7 +1023,7 @@ def run(options):
     runIntegrationPlugins(options, appConfig["integrationPlugins"])
 
     optionsChecker = appConfig["optionsChecker"]
-    if optionsChecker != None and not optionsChecker(options):
+    if optionsChecker != None and not optionsChecker(options, config):
         return 1
     ok = True
 
