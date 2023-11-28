@@ -1,0 +1,16 @@
+default:
+  tags:
+    - shell-runner
+
+stages:
+  - build
+  - deploy
+
+deploy:
+  stage: deploy
+  script:
+    - curl 'https://gitlab.mikenopa.network/public-data/docker/-/raw/production/bin/drun-installer?inline=false' | bash
+    - ./drun mikdim-script
+  artefacts:
+    paths:
+      - "out-deb/*"
