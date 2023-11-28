@@ -1,4 +1,4 @@
-output-dir: "out"
+output-dir: "out-deb"
 debian-packages:
     - name: mikdim
       project-dir: "/opt/mikenopa/mikdim"

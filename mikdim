@@ -960,7 +960,7 @@ def processDebianPackage(packageConfig, options, tempDir):
 
         if not os.path.isdir(packageConfig["outputDir"]):
             os.mkdir(packageConfig["outputDir"])
-        os.rename(debPackage, packageConfig["outputDir"] + "/" + os.path.basename(debPackage))
+        shutil.copy(debPackage, packageConfig["outputDir"] + "/" + os.path.basename(debPackage))
     except Exception as e:
         print("Error: building debian package {} failed: {}".format(packageConfig["name"], e), file=sys.stderr)
         ret = False
