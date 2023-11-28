@@ -7,7 +7,6 @@ stages:
   - deploy
 
 deploy:
-  name: Build/deploy images and/or debian packages
   stage: deploy
   script:
     - curl 'https://gitlab.mikenopa.network/public-data/docker/-/raw/production/bin/drun-installer?inline=false' | bash
