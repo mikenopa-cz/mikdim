@@ -11,6 +11,6 @@ deploy:
   script:
     - curl 'https://gitlab.mikenopa.network/public-data/docker/-/raw/production/bin/drun-installer?inline=false' | bash
     - ./drun mikdim-script
-  artefacts:
+  artifacts:
     paths:
       - "out-deb/*"
