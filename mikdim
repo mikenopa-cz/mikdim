@@ -42,25 +42,28 @@ DEBIAN_BUILD_DOCKER_IMAGE_MOUNT = "/tmp"
 
 DOCKERFILE_CONTENT = """# Dockerfile for building {finalImage} from {image} 
 FROM {image}
-
+{preuser}
 COPY archive.tar.gz /tmp/archive.tar.gz
 COPY postprocess.sh /tmp/postprocess.sh
 RUN bash /tmp/postprocess.sh
+{postuser}
 """
 
 POSTPROCESS_CONTENT = """#!/bin/bash
 set -e
 final_dir={finalDir}
 postprocess_script={postprocessScript}
-mkdir -p "$final_dir"
-cd "$final_dir"
-tar xzf "/tmp/archive.tar.gz"
+if [ -n "$final_dir" ]; then
+    mkdir -p "$final_dir"
+    cd "$final_dir"
+    tar xzf "/tmp/archive.tar.gz"
+fi
+rm -f "/tmp/archive.tar.gz"
 if [ -n "$postprocess_script" ]; then
     export ROOT_DIR="/"
     export PACKAGE_DIR="`pwd`"
     eval "$postprocess_script"
 fi
-rm -f "/tmp/archive.tar.gz"
 rm -f "/tmp/postprocess.sh"
 """
 
@@ -125,7 +128,7 @@ SCHEMA = {
                 "build": str,
                 schema.Optional("prepare-command"): schema.Or(str, [str]),
                 schema.Optional("prepare-command-dev"): schema.Or(str, [str]),
-                schema.Optional("project-dir"): str,
+                schema.Optional("project-dir"): schema.Or(str, None),
                 schema.Optional("postprocess"): schema.Or(str, [str]),
                 schema.Optional("environment"): {
                     schema.Optional(str): schema.Or(str, None)
@@ -493,9 +496,19 @@ def buildCommand(commandDefinition):
 def buildFinalProduct(imageConfig, tempDir, projectArchive):
     dockerDir = "{}/docker-{}".format(tempDir, imageConfig['name'])
     os.mkdir(dockerDir)
-    finalDir = imageConfig["project-dir"] if "project-dir" in imageConfig else "/workspace"
+    finalDir = imageConfig["project-dir"] if "project-dir" in imageConfig else None
+    if finalDir == None:
+        finalDir = ""
     postprocessScript = buildCommand(imageConfig["postprocess"] if "postprocess" in imageConfig else "")
-    putFile(dockerDir, "Dockerfile", DOCKERFILE_CONTENT, image=imageConfig["semiImages"][0], finalImage=imageConfig["finalImage"])
+    user = subprocess.check_output(["docker", "image", "inspect", "--format", "{{ .Config.User }}", "--", imageConfig["semiImages"][0]]).decode("utf-8").strip()
+    preuser=""
+    postuser=""
+    if user != 'root' and user != '':
+        preuser="USER root"
+        if not re.search(r'^[a-zA-Z_\-]+$', user):
+            raise Exception("Invalid docker user set for image: '{}'".format(user))
+        postuser="USER {}".format(user)
+    putFile(dockerDir, "Dockerfile", DOCKERFILE_CONTENT, image=imageConfig["semiImages"][0], finalImage=imageConfig["finalImage"], preuser=preuser, postuser=postuser)
     putFile(dockerDir, "postprocess.sh", POSTPROCESS_CONTENT, finalDir=shlex.quote(finalDir), postprocessScript=shlex.quote(postprocessScript))
     shutil.copy(projectArchive, "{}/archive.tar.gz".format(dockerDir))
     imageArgs = []
