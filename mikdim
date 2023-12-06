@@ -974,8 +974,8 @@ def processDebianPackage(packageConfig, options, tempDir):
         invokePrepareCommand(packageConfig, False, envVars)
         createBasicPackageStruct(packageConfig, tempDir)
         createDebianControlFile(packageConfig, tempDir)
-        exclude = installMaintainerScripts(packageConfig, tempDir)
-        archive = createProjectArchive(tempDir, packageConfig, additionalExclude=exclude)
+        installMaintainerScripts(packageConfig, tempDir)
+        archive = createProjectArchive(tempDir, packageConfig)
         buildScript = createBuildScript(packageConfig, os.path.basename(archive), tempDir)
         
         debPackage = buildDebianPackage(packageConfig, buildScript, tempDir)
