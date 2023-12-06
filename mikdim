@@ -40,6 +40,8 @@ SEMVER_REGEXP = '^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-
 DEBIAN_BUILD_DOCKER_IMAGE = "debian:latest"
 DEBIAN_BUILD_DOCKER_IMAGE_MOUNT = "/tmp"
 
+PRESERVED_ENV_VARS = ["HOME"]
+
 DOCKERFILE_CONTENT = """# Dockerfile for building {finalImage} from {image} 
 FROM {image}
 {preuser}
@@ -460,11 +462,18 @@ def createProjectArchive(tempDir, objectConfig, additionalExclude = []):
 
 createProjectArchive.archiveNumber = 1
 
+def getDefaultPreservedEnvVars():
+    env = {}
+    for var in PRESERVED_ENV_VARS:
+        if var in os.environ:
+            env[var] = os.environ[var]
+    return env
+
 def getEnvVars(objectConfig, devBuild):
     envKey = 'environment-dev' if devBuild else 'environment'
     env = None
     if not objectConfig['preserveEnvironment']:
-        env = {}
+        env = getDefaultPreservedEnvVars()
     if not (envKey in objectConfig):
         return env
     if env == None:
