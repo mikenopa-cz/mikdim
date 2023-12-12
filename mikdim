@@ -645,7 +645,7 @@ def invokePrepareCommand(objectConfig, devBuild, envVars):
     else:
         prepareCommandKey = 'prepare-command'
 
-    prepareCommand = objectConfig[prepareCommandKey] if 'prepare-command' in objectConfig else None
+    prepareCommand = objectConfig[prepareCommandKey] if prepareCommandKey in objectConfig else None
     
     if prepareCommand == None:
         return
