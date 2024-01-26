@@ -274,6 +274,7 @@ OPTIONS_ALL = {
     "project": {"fn": optSetValue, "opts": ["p", "project"]},
     "preserveEnvironment": {"fn": optSet, "opts": ["e", "preserve-environment"]},
     "dryRun": {"fn": optSet, "opts": ["D", "dry-run"]},
+    "list": {"fn": optSet, "opts": ["l", "list"]},
     "help": {"fn": optSet, "opts": ["h", "help"]}
 }
 
@@ -347,6 +348,8 @@ def printHelp():
         ["-s", "--semi-tag <tag>",          "specify the tag of the semiproduct (default '{}')".format(SEMI_TAG), "mikdim"],
         ["-o", "--output-dir <dir>",        "set the output directory where built packages should be stored", "mikdeb"],
         ["-D", "--dry-run",                 "just print building info and exit"],
+        ["-l", "--list",                    "just list all images and exit", "mikdim"],
+        ["-l", "--list",                    "just list all debian packages and exit", "mikdeb"],
         ["",   "--push",                    "push the images to the registry (registry login is not part of this command)", "mikdim"],
         ["",   "--push-only",               "only push the images, don't build", "mikdim"],
         ["-u", "--untag",                   "untag images after build (and push) is finished", "mikdim"],
@@ -685,6 +688,10 @@ def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
 
     if devBuild:
         imageConfig['semiImages'] = imageConfig["finalImages"]
+
+    if options['list']:
+        print(imageConfig["finalImage"])
+        return True
     
     print("Building image {} as {}".format(imageConfig["finalImage"], "dev" if devBuild else "prod"), file=sys.stderr)
     if not devBuild:
@@ -958,8 +965,12 @@ def processDebianPackage(packageConfig, options, tempDir):
 
     if not "architecture" in packageConfig:
         packageConfig["architecture"] = "all"
-        print("Warning: Missing architecture flag in configuration, supposing architecture \"all\".")
+        print("Warning: Missing architecture flag in configuration, supposing architecture \"all\".", file=sys.stderr)
     processDebianPackage.buildId += 1
+    
+    if options['list']:
+        print(packageConfig["name"])
+        return True
     
     print("Building package {} version {} for architecture {}".format(
         packageConfig["name"], packageConfig["projectVersion"], packageConfig["architecture"]
@@ -991,6 +1002,9 @@ def processDebianPackage(packageConfig, options, tempDir):
 processDebianPackage.buildId = 1
 
 def mikdebOptionsChecker(options, config):
+    #bypass options checking in case of just listing the images
+    if options['list']:
+        return True
     if not "projectVersion" in options or options["projectVersion"] == None:
         print("Error: missing project version")
         return False
@@ -1037,7 +1051,7 @@ def run(options):
     if config == None:
         print("Error: config file is invalid", file=sys.stderr)
         return 4
-    
+
     processedObjects = {}
 
     runIntegrationPlugins(options, appConfig["integrationPlugins"])
@@ -1045,7 +1059,16 @@ def run(options):
     optionsChecker = appConfig["optionsChecker"]
     if optionsChecker != None and not optionsChecker(options, config):
         return 1
+    
     ok = True
+
+    # we want to list directly here, since we don't want to create the temporary directory
+    # in case of just listing the images/debian packages
+    if options['list']:
+        for objectConfig in config[appConfig["configItemsKey"]]:
+            if not appConfig["processor"](objectConfig, options, None):
+                ok = False
+        return 0 if ok else 5
 
     with tempfile.TemporaryDirectory() as tempDir:
         for objectConfig in config[appConfig["configItemsKey"]]:
