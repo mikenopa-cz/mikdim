@@ -845,7 +845,7 @@ def createBuildScript(packageConfig, archiveFile, tempDir):
         packageName=shlex.quote(packageConfig["name"]),
         conffilesRegexp=shlex.quote(conffilesRegexp),
         finalDir=shlex.quote(finalDir),
-        projectVersion=shelx.quote(packageConfig["projectVersion"])
+        projectVersion=shlex.quote(packageConfig["projectVersion"])
     )
     return buildScript
 
