@@ -71,6 +71,7 @@ rm -f "/tmp/postprocess.sh"
 
 DPKG_DEB_CONTENT = """#!/bin/bash
 set -e
+export PROJECT_VERSION={projectVersion}
 base_dir={baseDir}
 package_subdir={packageSubdir}
 archive_file={archiveFile}
@@ -843,7 +844,8 @@ def createBuildScript(packageConfig, archiveFile, tempDir):
         postprocessScript=shlex.quote(postprocessScript),
         packageName=shlex.quote(packageConfig["name"]),
         conffilesRegexp=shlex.quote(conffilesRegexp),
-        finalDir=shlex.quote(finalDir)
+        finalDir=shlex.quote(finalDir),
+        projectVersion=shelx.quote(packageConfig["projectVersion"])
     )
     return buildScript
 
