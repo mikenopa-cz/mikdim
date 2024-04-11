@@ -139,6 +139,12 @@ SCHEMA = {
                 schema.Optional("environment-dev"): {
                     schema.Optional(str): schema.Or(str, None)
                 },
+                schema.Optional("build-args"): {
+                    schema.Optional(str): str
+                },
+                schema.Optional("build-args-dev"): {
+                    schema.Optional(str): str
+                },
                 schema.Optional("subdir"): str,
                 schema.Optional("exclude"): [str],
                 schema.Optional(str): object
@@ -474,11 +480,16 @@ def getDefaultPreservedEnvVars():
     return env
 
 def getEnvVars(objectConfig, devBuild):
-    envKey = 'environment-dev' if devBuild else 'environment'
+    envKeys = ['environment-dev', 'environment'] if devBuild else ['environment']
+    envKey = None
+    for key in envKeys:
+        if key in objectConfig:
+            envKey = key
+            break
     env = None
     if not objectConfig['preserveEnvironment']:
         env = getDefaultPreservedEnvVars()
-    if not (envKey in objectConfig):
+    if envKey == None:
         return env
     if env == None:
         env = dict(os.environ)
@@ -489,7 +500,21 @@ def getEnvVars(objectConfig, devBuild):
             del env[var]
     return env
 
-def buildSemiProduct(imageConfig, tempDir, envVars):
+def getBuildArgs(objectConfig, devBuild):
+    argsKeys = ['build-args-dev', 'build-args'] if devBuild else ['build-args']
+    for key in argsKeys:
+        if key in objectConfig:
+            return objectConfig[key]
+    return {}
+
+def buildArgsToDockerArgs(buildArgs):
+    dockerArgs = []
+    for var, val in buildArgs.items():
+        dockerArgs.append("--build-arg")
+        dockerArgs.append("{}={}".format(var, val))
+    return dockerArgs
+
+def buildSemiProduct(imageConfig, tempDir, envVars, buildArgs):
     if not os.path.isdir(imageConfig['build']):
         raise Exception("Build directory of image '{}' is not a directory".format(imageConfig['finalImage']))
     if not os.path.isfile("{}/Dockerfile".format(imageConfig['build'])):
@@ -498,7 +523,8 @@ def buildSemiProduct(imageConfig, tempDir, envVars):
     for img in imageConfig["semiImages"]:
         imageArgs.append("-t");
         imageArgs.append(img)
-    if subprocess.run(["docker", "build", "--pull"] + imageArgs + [imageConfig['build']], env=envVars).returncode != 0:
+    buildArgs = buildArgsToDockerArgs(buildArgs)
+    if subprocess.run(["docker", "build", "--pull"] + buildArgs + imageArgs + [imageConfig['build']], env=envVars).returncode != 0:
         raise Exception("Cannot build semiproduct image")
 
 def buildCommand(commandDefinition):
@@ -712,11 +738,12 @@ def processSingleImage(imageConfig, options, tempDir, devBuild, tags):
     ret = True
     try:
         envVars = getEnvVars(imageConfig, devBuild)
+        buildArgs = getBuildArgs(imageConfig, devBuild)
         if not options["pushOnly"]:
             invokePrepareCommand(imageConfig, devBuild, envVars)
             if not devBuild:
                 archive = createProjectArchive(tempDir, imageConfig)
-            buildSemiProduct(imageConfig, tempDir, envVars)
+            buildSemiProduct(imageConfig, tempDir, envVars, buildArgs)
             if not devBuild:
                 buildFinalProduct(imageConfig, tempDir, archive)
         if options["push"] or options["pushOnly"]:

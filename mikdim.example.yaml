@@ -7,8 +7,12 @@ images:
       prepare-command-dev: "some/command2" # run a command before starting the development build process (optional)
       subdir: "."                          # specify only a subdirectory to be used as the codebase (optional)
       exclude: ["docker"]                  # exclude specific files or directories from the codebase (optional)
+      build-args:                          # setup build args for the production build (optional)
+        BUILD_ARG: production              # set the build arg BUILD_ARG to value "production"
+      build-args-dev:                      # setup build args for the development build (optional, use the vaule of "build-args" if omitted)
+        BUILD_ARG: production              # set the build arg BUILD_ARG to value "production"
       environment:                         # setup environment variables for the production build (optional)
         BUILD_ENV: production              # set the environment variable BUILD_ENV to value "production"
         LANG: null                         # unset the environment variable LANG
-      environment-dev:                     # setup environment variables for the development build (optional)
+      environment-dev:                     # setup environment variables for the development build (optional, use the value of "environment" if omitted)
         BUILD_ENV: develop                 # set the environment variable BUILD_ENV to value "develop"
