@@ -36,7 +36,7 @@ DEV_TAG = "dev"
 DEBIAN_PACKAGE_SCRIPTS = ["preinst", "postinst", "prerm", "postrm"]
 DEBIAN_ARCHITECTURES = ["all", "arm64", "amd64", "armel", "armhf", "i386", "mips64el", "ppc64el", "riscv64", "s390x"]
 ALLOWED_BRANCHES = ["production", "staging", "master", "main"]
-SEMVER_REGEXP = '^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+)?$'
+SEMVER_REGEXP = '^([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+[0-9A-Za-z-]+)?$'
 DEBIAN_BUILD_DOCKER_IMAGE = "debian:latest"
 DEBIAN_BUILD_DOCKER_IMAGE_MOUNT = "/tmp"
 
@@ -92,7 +92,7 @@ if [ -n "$postprocess_script" ]; then
 fi
 cd "$base_dir/$package_subdir"
 if [ -n "$conffiles_regexp" ]; then
-    find . -type f | sed 's|^./|/|;/^\/DEBIAN\(\/\|$\)/d' | grep -E "$conffiles_regexp" > DEBIAN/conffiles || rm DEBIAN/conffiles
+    find . -type f | sed 's|^./|/|;/^\\/DEBIAN\\(\\/\\|$\\)/d' | grep -E "$conffiles_regexp" > DEBIAN/conffiles || rm DEBIAN/conffiles
 fi
 cd "$base_dir"
 dpkg-deb -b "$package_subdir" .
