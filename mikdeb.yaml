@@ -14,7 +14,7 @@ debian-packages:
         - python3
         - python3-yaml
         - python3-schema
-        - docker.io
+        - docker.io | docker-ce
       description: |
         The mikenopa mikdim tool. It consists of two binaries:
         - mikdim - for building docker images
