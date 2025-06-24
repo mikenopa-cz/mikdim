@@ -40,7 +40,7 @@ SEMVER_REGEXP = '^([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za
 DEBIAN_BUILD_DOCKER_IMAGE = "debian:latest"
 DEBIAN_BUILD_DOCKER_IMAGE_MOUNT = "/tmp"
 
-PRESERVED_ENV_VARS = ["HOME", "PATH"]
+PRESERVED_ENV_VARS = ["HOME", "PATH", "DOCKER_CONFIG"]
 
 DOCKERFILE_CONTENT = """# Dockerfile for building {finalImage} from {image} 
 FROM {image}
